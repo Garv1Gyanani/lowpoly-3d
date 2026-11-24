@@ -10,30 +10,56 @@ import '../theme/desert_palette.dart';
 import '../world/building_models.dart';
 import '../world/entity_models.dart';
 import '../world/environment_builder.dart';
+import '../world/outpost_layout.dart';
+import '../world/terrain/highway_and_parking.dart';
 import 'camera_3d.dart';
 import 'lighting.dart';
 import 'mesh_builder.dart';
 import 'vec3.dart';
 
-/// Projected drawable face ready for back-to-front painter sorting and GPU triangle batching.
+/// Projected drawable face ready for Newell plane-refined back-to-front sorting and GPU batching.
 class _RenderPoly {
   _RenderPoly({
+    required this.id,
     required this.points,
+    required this.worldVerts,
+    required this.planeNormal,
+    required this.planeD,
     required this.layerIndex,
     required this.groupDepth,
     required this.subOrder,
     required this.localDepth,
+    required this.minZ,
+    required this.maxZ,
+    required this.minX,
+    required this.maxX,
+    required this.minY,
+    required this.maxY,
+    required this.hasSortGroup,
     required this.fillColor,
     this.outlineColor,
   });
 
+  final int id;
   final List<Offset> points;
+  final List<Vec3> worldVerts;
+  final Vec3 planeNormal;
+  final double planeD;
   final int layerIndex;
   final double groupDepth;
   final int subOrder;
   final double localDepth;
+  final double minZ;
+  final double maxZ;
+  final double minX;
+  final double maxX;
+  final double minY;
+  final double maxY;
+  final bool hasSortGroup;
   final Color fillColor;
   final Color? outlineColor;
+  int pulls = 0;
+  int lastPulledBefore = -1;
 }
 
 /// High-throughput pure-Dart 3D rendering pipeline:
@@ -67,9 +93,13 @@ class SceneRenderer3D {
     Size size,
     Camera3D camera,
     DesertLighting lighting,
-    double animTime,
-  ) {
-    final hY = camera.horizonScreenY(size).clamp(size.height * 0.05, size.height * 0.58);
+    double animTime, {
+    CameraFrame? frame,
+  }) {
+    final activeFrame = frame ?? camera.createFrame(size);
+    final horizDir = Vec3(activeFrame.forward.x, 0.0, activeFrame.forward.z).normalized();
+    final rawHorizonY = activeFrame.project(activeFrame.eye + horizDir * 500.0).offset.dy;
+    final hY = rawHorizonY.clamp(size.height * 0.05, size.height * 0.58);
 
     const dayTop = Color(0xFF6693C9);
     const dayMid = Color(0xFFA8C4DF);
@@ -195,27 +225,34 @@ class SceneRenderer3D {
     Size size,
     Camera3D camera,
     DesertLighting lighting,
-    MeshBuilder mesh,
-  ) {
-    final frame = camera.createFrame(size);
-    final eye = frame.eye;
+    MeshBuilder mesh, {
+    CameraFrame? frame,
+  }) {
+    final activeFrame = frame ?? camera.createFrame(size);
+    final eye = activeFrame.eye;
     final renderList = <_RenderPoly>[];
 
     for (final poly in mesh.polys) {
-      if (!poly.doubleSided && poly.layer == RenderLayer.world) {
-        final dx = eye.x - poly.centroid.x;
-        final dy = eye.y - poly.centroid.y;
-        final dz = eye.z - poly.centroid.z;
-        if (poly.normal.x * dx + poly.normal.y * dy + poly.normal.z * dz <= 0.0) {
-          continue;
-        }
+      // Bounding-sphere frustum culling skips off-screen geometry before projection & sorting.
+      if (activeFrame.isSphereCulled(poly.centroid, poly.radius)) continue;
+
+      final v0 = poly.vertices.first;
+      final toEyeX = eye.x - poly.centroid.x;
+      final toEyeY = eye.y - poly.centroid.y;
+      final toEyeZ = eye.z - poly.centroid.z;
+      final viewDot = poly.normal.x * toEyeX + poly.normal.y * toEyeY + poly.normal.z * toEyeZ;
+
+      if (!poly.doubleSided && poly.layer == RenderLayer.world && viewDot <= 0.0) {
+        continue;
       }
 
-      final pts = _projectAndClipPoly(poly.vertices, frame);
+      final pts = _projectAndClipPoly(poly.vertices, activeFrame);
       if (pts == null || pts.$1.length < 3) continue;
 
       final screenPts = pts.$1;
       final avgDepth = pts.$2;
+      final minZ = pts.$3;
+      final maxZ = pts.$4;
 
       double minX = double.infinity;
       double maxX = double.negativeInfinity;
@@ -230,11 +267,25 @@ class SceneRenderer3D {
       if (maxX < -80 || minX > size.width + 80 || maxY < -80 || minY > size.height + 80) {
         continue;
       }
+      // Sub-pixel LOD culling: skip microscopic world faces when zoomed far out.
+      if (poly.layer == RenderLayer.world &&
+          (maxX - minX) < 1.15 &&
+          (maxY - minY) < 1.15) {
+        continue;
+      }
 
-      final localDepth = avgDepth + poly.depthBias;
+      final isWorld = poly.layer == RenderLayer.world;
+      // Only apply legacy depthBias to coplanar 2D ground/shadow/terrain layers;
+      // 3D world geometry uses exact 3D depth + Newell plane-side ordering so recessed
+      // bulbs, windows, and beams never bleed through roofs or awnings.
+      final localDepth = isWorld ? avgDepth : avgDepth + poly.depthBias;
       final groupDepth = poly.sortGroupAnchor != null
-          ? frame.project(poly.sortGroupAnchor!).depth
-          : localDepth;
+          ? activeFrame.project(poly.sortGroupAnchor!).depth
+          : (isWorld ? maxZ : localDepth);
+
+      // Orient the face plane normal toward the camera for exact Newell plane-side tests.
+      final planeNormal = viewDot < 0.0 ? -poly.normal : poly.normal;
+      final planeD = planeNormal.x * v0.x + planeNormal.y * v0.y + planeNormal.z * v0.z;
 
       final Color shaded;
       if (poly.unlit) {
@@ -254,18 +305,29 @@ class SceneRenderer3D {
 
       renderList.add(
         _RenderPoly(
+          id: renderList.length,
           points: screenPts,
+          worldVerts: poly.vertices,
+          planeNormal: planeNormal,
+          planeD: planeD,
           layerIndex: poly.layer.index,
           groupDepth: groupDepth,
           subOrder: poly.subOrder,
           localDepth: localDepth,
+          minZ: minZ,
+          maxZ: maxZ,
+          minX: minX,
+          maxX: maxX,
+          minY: minY,
+          maxY: maxY,
+          hasSortGroup: poly.sortGroupAnchor != null,
           fillColor: shaded,
           outlineColor: poly.outlineColor,
         ),
       );
     }
 
-    // Sort: layer ASC -> groupDepth DESC -> subOrder ASC -> localDepth DESC
+    // 1. Fast initial back-to-front sort: layer ASC -> groupDepth DESC -> subOrder ASC -> localDepth DESC
     renderList.sort((a, b) {
       final layerCmp = a.layerIndex.compareTo(b.layerIndex);
       if (layerCmp != 0) return layerCmp;
@@ -275,6 +337,10 @@ class SceneRenderer3D {
       if (subCmp != 0) return subCmp;
       return b.localDepth.compareTo(a.localDepth);
     });
+
+    // 2. Newell plane-side refinement on RenderLayer.world so countertops, walls, flush windows,
+    //    signs & props NEVER flip or pop when orbiting 360° or tilting top-down!
+    _refineWorldDepthOrder(renderList);
 
     // Count total triangle vertices for single-pass GPU Vertices batch
     int totalTriVerts = 0;
@@ -337,8 +403,8 @@ class SceneRenderer3D {
         ..style = PaintingStyle.stroke
         ..strokeCap = StrokeCap.round;
       for (final line in mesh.lines) {
-        final a = frame.project(line.start);
-        final b = frame.project(line.end);
+        final a = activeFrame.project(line.start);
+        final b = activeFrame.project(line.end);
         if (!a.inFront || !b.inFront) continue;
         linePaint
           ..color = line.color
@@ -347,13 +413,175 @@ class SceneRenderer3D {
       }
     }
 
-    _paintPerspectiveSigns(canvas, frame, lighting, mesh.signs);
-    _paintGlowLights(canvas, frame, lighting, mesh.glows);
+    _paintPerspectiveSigns(canvas, activeFrame, lighting, mesh.signs, renderList);
+    _paintGlowLights(canvas, activeFrame, lighting, mesh.glows);
+  }
+
+  /// Canonical Newell's Algorithm depth resolver on `RenderLayer.world`:
+  /// Starting from `maxZ`-descending order, pulls any occluded polygon `Q` ahead of `P`
+  /// whenever their 2D screen projections truly overlap (SAT) and 3D half-space tests
+  /// prove `P` lies in front of `Q`. Uses a watermark-guarded `maxZ <= minZ` early break
+  /// so nearby buildings at the same depth never miss overlaps regardless of polygon count.
+  static void _refineWorldDepthOrder(List<_RenderPoly> list) {
+    final worldLayer = RenderLayer.world.index;
+    int start = -1;
+    int end = list.length;
+    for (int i = 0; i < list.length; i++) {
+      final li = list[i].layerIndex;
+      if (li == worldLayer && start == -1) {
+        start = i;
+      } else if (li > worldLayer) {
+        end = i;
+        break;
+      }
+    }
+    if (start == -1 || end - start < 2) return;
+
+    const int maxScan = 512;
+    const int maxPulls = 8;
+    int watermark = start;
+
+    for (int i = start; i < end - 1; i++) {
+      final p = list[i];
+      if (p.hasSortGroup) continue;
+
+      final limit = math.min(end, i + maxScan);
+      int pullIdx = -1;
+      for (int j = i + 1; j < limit; j++) {
+        final q = list[j];
+        if (q.hasSortGroup) continue;
+
+        // Every element at index > watermark remains strictly sorted by maxZ DESC,
+        // so once q.maxZ <= p.minZ no remaining polygon can overlap p in depth.
+        if (q.maxZ <= p.minZ) {
+          if (j > watermark) break;
+          continue;
+        }
+        // Fast 2D screen AABB reject (>98% of pairs skip in 4 float compares)
+        if (p.maxX <= q.minX || p.minX >= q.maxX || p.maxY <= q.minY || p.minY >= q.maxY) {
+          continue;
+        }
+        if (q.pulls >= maxPulls || q.lastPulledBefore == p.id) continue;
+
+        // Exact 2D convex polygon Separating Axis Test (ignores edge-only neighbors)
+        if (!_polysOverlap2D(p.points, q.points)) continue;
+
+        final pInFrontOfQ = q.minZ >= p.maxZ ||
+            isWorldPolyInFront(
+              aVerts: p.worldVerts,
+              aNormal: p.planeNormal,
+              aD: p.planeD,
+              bVerts: q.worldVerts,
+              bNormal: q.planeNormal,
+              bD: q.planeD,
+            );
+        if (pInFrontOfQ) {
+          pullIdx = j;
+          break;
+        }
+      }
+
+      if (pullIdx != -1) {
+        final q = list[pullIdx];
+        q.pulls++;
+        q.lastPulledBefore = p.id;
+        if (pullIdx > watermark) watermark = pullIdx;
+        for (int k = pullIdx; k > i; k--) {
+          list[k] = list[k - 1];
+        }
+        list[i] = q;
+        i--; // Re-evaluate the newly pulled polygon at index i
+      }
+    }
+  }
+
+  /// Zero-allocation 2D convex polygon Separating Axis Test (SAT).
+  /// Returns `false` for disjoint polygons AND polygons that only touch along a shared edge.
+  static bool _polysOverlap2D(List<Offset> a, List<Offset> b) {
+    if (_hasSeparatingAxis2D(a, b)) return false;
+    if (_hasSeparatingAxis2D(b, a)) return false;
+    return true;
+  }
+
+  static bool _hasSeparatingAxis2D(List<Offset> poly, List<Offset> other) {
+    final n = poly.length;
+    for (int i = 0; i < n; i++) {
+      final p0 = poly[i];
+      final p1 = poly[(i + 1) % n];
+      final nx = -(p1.dy - p0.dy);
+      final ny = p1.dx - p0.dx;
+      final lenSq = nx * nx + ny * ny;
+      if (lenSq < 1e-6) continue;
+
+      double minA = double.infinity;
+      double maxA = double.negativeInfinity;
+      for (final p in poly) {
+        final d = p.dx * nx + p.dy * ny;
+        if (d < minA) minA = d;
+        if (d > maxA) maxA = d;
+      }
+
+      double minB = double.infinity;
+      double maxB = double.negativeInfinity;
+      for (final p in other) {
+        final d = p.dx * nx + p.dy * ny;
+        if (d < minB) minB = d;
+        if (d > maxB) maxB = d;
+      }
+
+      // Tiny 0.05px tolerance prevents shared-edge adjacent box/wall faces from triggering swaps.
+      final edgeEps = 0.05 * math.sqrt(lenSq);
+      if (maxA <= minB + edgeEps || maxB <= minA + edgeEps) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Exact 3D Newell plane-side test: returns true when polygon [aVerts] lies strictly on the
+  /// camera side of [bVerts]'s plane OR [bVerts] lies strictly behind [aVerts]'s plane.
+  /// Both [aNormal] and [bNormal] must be oriented toward the camera eye.
+  static bool isWorldPolyInFront({
+    required List<Vec3> aVerts,
+    required Vec3 aNormal,
+    required double aD,
+    required List<Vec3> bVerts,
+    required Vec3 bNormal,
+    required double bD,
+  }) {
+    const eps = 0.002;
+
+    // 1. Test A's vertices against B's plane (positive = camera side = in front of B)
+    double minA = double.infinity;
+    double maxA = double.negativeInfinity;
+    for (final v in aVerts) {
+      final s = bNormal.x * v.x + bNormal.y * v.y + bNormal.z * v.z - bD;
+      if (s < minA) minA = s;
+      if (s > maxA) maxA = s;
+    }
+    if (minA >= -eps && maxA > eps) return true;
+    if (maxA <= eps && minA < -eps) return false;
+
+    // 2. Test B's vertices against A's plane (negative = behind A => A is in front of B)
+    double minB = double.infinity;
+    double maxB = double.negativeInfinity;
+    for (final v in bVerts) {
+      final s = aNormal.x * v.x + aNormal.y * v.y + aNormal.z * v.z - aD;
+      if (s < minB) minB = s;
+      if (s > maxB) maxB = s;
+    }
+    if (maxB <= eps && minB < -eps) return true;
+    if (minB >= -eps && maxB > eps) return false;
+
+    return false;
   }
 
   /// Fast projection with near-plane Sutherland-Hodgman polygon clipping so large
   /// foreground road & terrain quads never vanish abruptly when zooming in.
-  static (List<Offset>, double)? _projectAndClipPoly(List<Vec3> worldVerts, CameraFrame frame) {
+  static (List<Offset>, double, double, double)? _projectAndClipPoly(
+    List<Vec3> worldVerts,
+    CameraFrame frame,
+  ) {
     bool allInFront = true;
     bool anyInFront = false;
 
@@ -373,12 +601,16 @@ class SceneRenderer3D {
     if (allInFront) {
       final pts = <Offset>[];
       double sumDepth = 0.0;
+      double minZ = double.infinity;
+      double maxZ = double.negativeInfinity;
       for (final v in worldVerts) {
         final p = frame.project(v);
         pts.add(p.offset);
         sumDepth += p.depth;
+        if (p.depth < minZ) minZ = p.depth;
+        if (p.depth > maxZ) maxZ = p.depth;
       }
-      return (pts, sumDepth / pts.length);
+      return (pts, sumDepth / pts.length, minZ, maxZ);
     }
 
     // Clip in camera space against z = nearClipZ
@@ -404,12 +636,28 @@ class SceneRenderer3D {
     if (clipped.length < 3) return null;
     final pts = <Offset>[];
     double sumDepth = 0.0;
+    double minZ = double.infinity;
+    double maxZ = double.negativeInfinity;
     for (final c in clipped) {
       final invZ = frame.focalLength / c.z;
       pts.add(Offset(frame.halfWidth + c.x * invZ, frame.halfHeight - c.y * invZ));
       sumDepth += c.z;
+      if (c.z < minZ) minZ = c.z;
+      if (c.z > maxZ) maxZ = c.z;
     }
-    return (pts, sumDepth / pts.length);
+    return (pts, sumDepth / pts.length, minZ, maxZ);
+  }
+
+  static bool _pointInPoly2D(Offset p, List<Offset> poly) {
+    bool inside = false;
+    for (int i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      final pi = poly[i];
+      final pj = poly[j];
+      final intersect = ((pi.dy > p.dy) != (pj.dy > p.dy)) &&
+          (p.dx < (pj.dx - pi.dx) * (p.dy - pi.dy) / (pj.dy - pi.dy) + pi.dx);
+      if (intersect) inside = !inside;
+    }
+    return inside;
   }
 
   static void _paintPerspectiveSigns(
@@ -417,9 +665,11 @@ class SceneRenderer3D {
     CameraFrame frame,
     DesertLighting lighting,
     List<SignText3D> signs,
+    List<_RenderPoly> renderList,
   ) {
     final nightStrength = (lighting.nightFactor * 0.95 + lighting.sunsetFactor * 0.4).clamp(0.0, 1.0);
     final nightBucket = (nightStrength * 12).round();
+    final worldLayer = RenderLayer.world.index;
 
     for (final sign in signs) {
       final tl = frame.project(sign.topLeft);
@@ -434,7 +684,28 @@ class SceneRenderer3D {
 
       final signW = u.distance;
       final signH = v.distance;
-      if (signW < 10 || signH < 4) continue;
+      if (signW < 10 || signH < 4 || signW > 900 || signH > 450) continue;
+
+      // Occlusion check: hide sign text cleanly when a closer 3D wall/roof/umbrella blocks it.
+      final centerWorld = (sign.topRight + sign.bottomLeft) * 0.5;
+      final centerProj = frame.project(centerWorld);
+      if (!centerProj.inFront) continue;
+      bool occluded = false;
+      final sp = centerProj.offset;
+      final occludeZ = centerProj.depth - 0.14;
+      for (int i = renderList.length - 1; i >= 0; i--) {
+        final rp = renderList[i];
+        if (rp.layerIndex != worldLayer) continue;
+        if (rp.maxZ >= occludeZ) continue;
+        if (sp.dx < rp.minX || sp.dx > rp.maxX || sp.dy < rp.minY || sp.dy > rp.maxY) {
+          continue;
+        }
+        if (_pointInPoly2D(sp, rp.points)) {
+          occluded = true;
+          break;
+        }
+      }
+      if (occluded) continue;
 
       final effectiveStrength = nightBucket / 12.0;
       final textCol = (sign.nightGlow && sign.glowColor != null)
@@ -560,7 +831,9 @@ class SceneRenderer3D {
   }
 }
 
-/// Main Desert Outpost CustomPainter with multi-tier static geometry caching.
+/// Main Desert Outpost CustomPainter with two-tier static geometry caching:
+/// - `_backdropCache`: terrain, Route 163 highway, distant mesas & telephone line (rebuilds only on shadow bucket)
+/// - `_outpostStaticCache`: roads, parking lots, cleared flora & static buildings (rebuilds on player edits)
 class DesertOutpostPainter extends CustomPainter {
   DesertOutpostPainter({
     required this.controller,
@@ -568,8 +841,11 @@ class DesertOutpostPainter extends CustomPainter {
 
   final GameController controller;
 
-  final MeshBuilder _staticWorldCache = MeshBuilder();
-  int _cachedWorldSignature = -1;
+  final MeshBuilder _backdropCache = MeshBuilder();
+  int _cachedBackdropBucket = -1;
+
+  final MeshBuilder _outpostStaticCache = MeshBuilder();
+  int _cachedOutpostSignature = -1;
 
   final MeshBuilder _frameMesh = MeshBuilder();
 
@@ -579,37 +855,47 @@ class DesertOutpostPainter extends CustomPainter {
     final lighting = controller.lighting;
     final animTime = controller.animTime;
 
-    SceneRenderer3D.paintSkyDome(canvas, size, camera, lighting, animTime);
+    // Single CameraFrame shared across sky dome, 3D mesh, routes, particles & cash popups!
+    final frame = camera.createFrame(size);
 
-    // Quantize shadow movement so static world shadows refresh smoothly ~once/sec
-    // while terrain, mesas, highway, rocks & un-animated buildings stay cached!
-    final shadowBucket = (lighting.timeOfDay * 96).floor();
-    final staticSig = Object.hash(
-      controller.parkingTier,
-      controller.builtCount,
+    SceneRenderer3D.paintSkyDome(canvas, size, camera, lighting, animTime, frame: frame);
+
+    final shadowBucket = (lighting.timeOfDay * 48).floor();
+    if (shadowBucket != _cachedBackdropBucket) {
+      _cachedBackdropBucket = shadowBucket;
+      _backdropCache.clear();
+      EnvironmentBuilder.buildBackdrop(_backdropCache, lighting);
+    }
+
+    final outpostSig = Object.hash(
       controller.decorations.length,
       controller.staticBuildingsSignature,
       shadowBucket,
     );
 
-    if (staticSig != _cachedWorldSignature) {
-      _cachedWorldSignature = staticSig;
-      _staticWorldCache.clear();
-      EnvironmentBuilder.buildStatic(
-        _staticWorldCache,
+    if (outpostSig != _cachedOutpostSignature) {
+      _cachedOutpostSignature = outpostSig;
+      _outpostStaticCache.clear();
+      EnvironmentBuilder.buildOutpostStatic(
+        _outpostStaticCache,
         lighting,
-        parkingTier: controller.parkingTier,
-        builtCount: controller.builtCount,
+        roadNetwork: controller.roadNetwork,
+        parkingLots: controller.parkingLots,
+        worldGrid: controller.worldGrid,
+        toolMode: controller.toolMode,
+        outpostStage: controller.outpostStage,
+        maxParcels: controller.stageInfo.maxParcels,
+        isOccupied: controller.isWorldPointOccupied,
       );
       for (final deco in controller.decorations) {
         if (!EntityModels.isAnimatedDecoration(deco)) {
-          EntityModels.buildDecoration(_staticWorldCache, deco, lighting, 0.0);
+          EntityModels.buildDecoration(_outpostStaticCache, deco, lighting, 0.0);
         }
       }
       for (final plot in controller.visiblePlots) {
         if (BuildingModels.isStaticPlot(plot, isSelected: controller.selectedPlotId == plot.id)) {
           BuildingModels.buildPlot(
-            _staticWorldCache,
+            _outpostStaticCache,
             plot,
             lighting,
             0.0,
@@ -620,15 +906,15 @@ class DesertOutpostPainter extends CustomPainter {
     }
 
     _frameMesh.clear();
-    _frameMesh.appendFrom(_staticWorldCache);
+    _frameMesh.appendFrom(_backdropCache);
+    _frameMesh.appendFrom(_outpostStaticCache);
 
-    // Dynamic ambient environment (clouds, swaying sagebrush, spinning windmill, tumbleweed)
+    // Dynamic ambient environment (clouds, swaying sagebrush, tumbleweeds)
     EnvironmentBuilder.buildDynamic(
       _frameMesh,
       lighting,
       animTime,
-      parkingTier: controller.parkingTier,
-      builtCount: controller.builtCount,
+      isOccupied: controller.isWorldPointOccupied,
     );
 
     for (final deco in controller.decorations) {
@@ -650,6 +936,10 @@ class DesertOutpostPainter extends CustomPainter {
       }
     }
 
+    // Live 3D placement ghost & road line preview while a build tool is active
+    _appendPlacementGhost(_frameMesh, lighting, animTime);
+    _appendRoadLinePreview(_frameMesh, animTime);
+
     for (final vehicle in controller.vehicles) {
       EntityModels.buildVehicle(_frameMesh, vehicle, lighting);
     }
@@ -657,11 +947,247 @@ class DesertOutpostPainter extends CustomPainter {
       EntityModels.buildVisitor(_frameMesh, visitor, lighting);
     }
 
-    SceneRenderer3D.paintMesh(canvas, size, camera, lighting, _frameMesh);
+    SceneRenderer3D.paintMesh(canvas, size, camera, lighting, _frameMesh, frame: frame);
 
-    final frame = camera.createFrame(size);
+    _paintRoutePreview(canvas, frame);
     _paintParticles(canvas, frame, controller.particles);
     _paintFloatingCash(canvas, frame, controller.floatingCash);
+  }
+
+  void _appendPlacementGhost(
+    MeshBuilder mesh,
+    DesertLighting lighting,
+    double animTime,
+  ) {
+    final valid = controller.isGhostPlacementValid;
+    final padFill = valid
+        ? const Color(0x664CA85E)
+        : const Color(0x77D94B38);
+    final padOutline = valid
+        ? const Color(0xFF9BFF9F)
+        : const Color(0xFFFF8F80);
+
+    if (controller.toolMode == WorldToolMode.placeBuilding &&
+        controller.pendingBuildingType != null) {
+      final type = controller.pendingBuildingType!;
+      final data = kBusinessCatalog[type]!;
+      final rot = controller.ghostRotation;
+      final (w, d) = OutpostLayout.rotatedSize(data.gridW, data.gridD, rot);
+      final center = OutpostLayout.footprintCenter(
+        controller.ghostGridX,
+        controller.ghostGridZ,
+        w,
+        d,
+      );
+      final yaw = OutpostLayout.yawForQuarterTurn(rot);
+      final hoverY = 0.08 + math.sin(animTime * 4.5).abs() * 0.10;
+
+      // Ground validity pad
+      mesh.addGroundRect(
+        center.x,
+        0.045,
+        center.z,
+        w * OutpostLayout.gridCellSize - 0.08,
+        d * OutpostLayout.gridCellSize - 0.08,
+        padFill,
+        layer: RenderLayer.groundDecal,
+        depthBias: -0.25,
+        unlit: true,
+        outlineColor: padOutline,
+      );
+
+      // Front entrance directional chevron arrow showing which way the store faces
+      final (fdx, fdz) = OutpostLayout.forwardStepForQuarterTurn(rot);
+      final frontDist = (fdx != 0 ? w : d) * OutpostLayout.gridCellSize * 0.5 + 0.55;
+      final arrowCenter = Vec3(
+        center.x + fdx * frontDist,
+        0.06,
+        center.z + fdz * frontDist,
+      );
+      mesh.withTransform(arrowCenter, yaw, () {
+        mesh.addTri(
+          const Vec3(-0.48, 0.0, -0.24),
+          const Vec3(0.0, 0.0, 0.44),
+          const Vec3(0.48, 0.0, -0.24),
+          valid ? DesertPalette.gold : const Color(0xFFFF7A66),
+          layer: RenderLayer.groundDecal,
+          depthBias: -0.30,
+          unlit: true,
+        );
+      });
+
+      final lv = controller.relocatingPlot?.level ?? 1;
+      mesh.withTransform(center + Vec3(0, hoverY, 0), yaw, () {
+        BuildingModels.buildByType(
+          mesh,
+          type,
+          Vec3.zero,
+          lv,
+          lighting,
+          const Color(0x00000000),
+          animTime,
+        );
+      });
+    } else if (controller.toolMode == WorldToolMode.placeDecoration &&
+        controller.pendingDecoration != null) {
+      final center = OutpostLayout.cellCenter(controller.ghostGridX, controller.ghostGridZ);
+      mesh.addGroundRect(
+        center.x,
+        0.05,
+        center.z,
+        OutpostLayout.gridCellSize - 0.08,
+        OutpostLayout.gridCellSize - 0.08,
+        padFill,
+        layer: RenderLayer.groundDecal,
+        depthBias: -0.26,
+        unlit: true,
+        outlineColor: padOutline,
+      );
+      EntityModels.buildDecoration(
+        mesh,
+        PlacedDecoration(
+          id: 'ghost_deco',
+          kind: controller.pendingDecoration!.$1,
+          position: center,
+          name: '',
+          cost: 0,
+        ),
+        lighting,
+        animTime,
+      );
+    } else if (controller.toolMode == WorldToolMode.placeParking &&
+        controller.pendingParkingKind != null) {
+      final kind = controller.pendingParkingKind!;
+      final lot = ParkingLotEntity(
+        id: 'ghost_lot',
+        kind: kind,
+        gridX: controller.ghostGridX,
+        gridZ: controller.ghostGridZ,
+        rotationQuarter: controller.ghostRotation,
+      );
+      HighwayAndParking.buildParkingLot(
+        mesh,
+        lot,
+        lighting: lighting,
+        tintOverride: valid ? null : const Color(0xBBD94B38),
+      );
+      final (w, d) = lot.sizeCells;
+      mesh.addGroundRect(
+        lot.position.x,
+        0.05,
+        lot.position.z,
+        w * OutpostLayout.gridCellSize,
+        d * OutpostLayout.gridCellSize,
+        padFill,
+        layer: RenderLayer.groundDecal,
+        depthBias: -0.26,
+        unlit: true,
+        outlineColor: padOutline,
+      );
+
+      // Entry-side chevron arrow showing which edge faces the road
+      final (_, depth) = lot.orientedWorldDimensions;
+      final entryArrowPos = lot.position - lot.pullInDir * (depth * 0.5 + 0.50);
+      final entryYaw = math.atan2(lot.pullInDir.x, lot.pullInDir.z);
+      mesh.withTransform(Vec3(entryArrowPos.x, 0.06, entryArrowPos.z), entryYaw, () {
+        mesh.addTri(
+          const Vec3(-0.48, 0.0, -0.24),
+          const Vec3(0.0, 0.0, 0.44),
+          const Vec3(0.48, 0.0, -0.24),
+          valid ? DesertPalette.gold : const Color(0xFFFF7A66),
+          layer: RenderLayer.groundDecal,
+          depthBias: -0.30,
+          unlit: true,
+        );
+      });
+    }
+  }
+
+  void _appendRoadLinePreview(MeshBuilder mesh, double animTime) {
+    if (controller.toolMode != WorldToolMode.paintRoad) return;
+    const cs = OutpostLayout.gridCellSize;
+    final start = controller.roadLineStart;
+    if (start == null) return;
+    final preview = controller.roadLinePreview;
+    final pulse = 0.75 + 0.25 * math.sin(animTime * 6.0);
+    final erase = controller.roadEraseMode;
+
+    void cell(GridCell c, Color fill, Color outline) {
+      final w = c.worldCenter;
+      mesh.addGroundRect(
+        w.x,
+        0.06,
+        w.z,
+        cs - 0.16,
+        cs - 0.16,
+        fill,
+        layer: RenderLayer.groundDecal,
+        depthBias: -0.35,
+        unlit: true,
+        outlineColor: outline,
+      );
+    }
+
+    if (preview.cells.isEmpty) {
+      cell(start, Color.fromRGBO(242, 193, 78, 0.45 * pulse), const Color(0xFFF2C14E));
+      return;
+    }
+    final ok = preview.isValid;
+    for (final c in preview.buildCells) {
+      cell(
+        c,
+        erase
+            ? Color.fromRGBO(217, 75, 56, 0.45 * pulse)
+            : (ok
+                ? Color.fromRGBO(76, 168, 94, 0.48 * pulse)
+                : Color.fromRGBO(242, 160, 60, 0.42 * pulse)),
+        erase ? const Color(0xFFFF8F80) : (ok ? const Color(0xFF9BFF9F) : const Color(0xFFFFC27A)),
+      );
+    }
+    for (final c in preview.skipCells) {
+      cell(c, const Color(0x22FFFFFF), const Color(0x66FFFFFF));
+    }
+    for (final c in preview.blockedCells) {
+      cell(c, Color.fromRGBO(217, 75, 56, 0.55 * pulse), const Color(0xFFFF6B5A));
+    }
+  }
+
+  void _paintRoutePreview(Canvas canvas, CameraFrame frame) {
+    if (controller.toolMode != WorldToolMode.placeBuilding) return;
+    final access = controller.ghostAccessPreview;
+    if (access.routePreview.length < 2) return;
+
+    final path = Path();
+    bool started = false;
+    for (final pt in access.routePreview) {
+      final proj = frame.project(pt + const Vec3(0, 0.16, 0));
+      if (!proj.inFront) continue;
+      if (!started) {
+        path.moveTo(proj.offset.dx, proj.offset.dy);
+        started = true;
+      } else {
+        path.lineTo(proj.offset.dx, proj.offset.dy);
+      }
+    }
+    if (!started) return;
+
+    final routeCol = access.isGreat
+        ? const Color(0xFF6EF594)
+        : (access.isPoor ? const Color(0xFFFFB24A) : const Color(0xFF68E8DE));
+    final glowPaint = Paint()
+      ..color = routeCol.withValues(alpha: 0.35)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 9.0
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    final linePaint = Paint()
+      ..color = routeCol
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.6
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    canvas.drawPath(path, glowPaint);
+    canvas.drawPath(path, linePaint);
   }
 
   void _paintParticles(

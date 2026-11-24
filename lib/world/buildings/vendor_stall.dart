@@ -50,14 +50,14 @@ class VendorStallBuilding {
         );
       }
 
+      // Back posts stop cleanly under awning (yTop = 2.36 < 2.40); front posts stop under awning (yTop = 2.10 < 2.18)
       for (final x in [-1.38, 1.38]) {
-        for (final z in [-0.90, 0.80]) {
-          mesh.addBox(x, 0.18, z, 0.15, 2.15, 0.15, DesertPalette.woodDark);
-        }
+        mesh.addBox(x, 0.18, -0.90, 0.15, 2.18, 0.15, DesertPalette.woodDark, skipTop: true);
+        mesh.addBox(x, 0.18, 0.80, 0.15, 1.92, 0.15, DesertPalette.woodDark, skipTop: true);
       }
 
       // Serving counter & countertop bottles + snack jar
-      mesh.addBox(0, 0.18, 0.68, 2.70, 0.88, 0.58, DesertPalette.wood);
+      mesh.addBox(0, 0.18, 0.68, 2.70, 0.88, 0.58, DesertPalette.wood, skipTop: true);
       mesh.addBox(0, 1.06, 0.68, 2.86, 0.10, 0.72, DesertPalette.cream);
       mesh.addBox(-0.88, 1.16, 0.68, 0.12, 0.26, 0.12, DesertPalette.water);
       mesh.addBox(-0.70, 1.16, 0.68, 0.12, 0.24, 0.12, DesertPalette.awningRed);
@@ -87,20 +87,19 @@ class VendorStallBuilding {
       for (final lx in [-1.15, -0.58, 0.0, 0.58, 1.15]) {
         mesh.addBox(
           lx,
-          1.84,
-          1.12,
-          0.11,
-          0.11,
-          0.11,
+          1.82,
+          1.08,
+          0.10,
+          0.10,
+          0.10,
           DesertPalette.cream,
           emissiveColor: DesertPalette.windowNight,
           emissiveStrength: 1.0,
-          depthBias: -0.22,
         );
       }
 
       mesh.addBox(-2.0, 0, 0.92, 0.62, 0.84, 0.12, DesertPalette.woodDark);
-      mesh.addBox(-2.0, 0.14, 0.96, 0.50, 0.60, 0.08, const Color(0xFF333B3D), depthBias: -0.18);
+      mesh.addFlushRectOnZ(-2.0, 0.44, 0.98, 0.50, 0.60, const Color(0xFF333B3D), positiveZ: true);
 
       if (level >= 3) {
         MeshParts.addMarqueeSign(

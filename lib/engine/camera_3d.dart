@@ -13,9 +13,8 @@ class ProjectedPoint {
 }
 
 /// Precomputed per-frame camera basis & viewport projection constants.
-/// Eliminates thousands of redundant trig/cross-product calls per frame.
 class CameraFrame {
-  const CameraFrame({
+  CameraFrame({
     required this.eye,
     required this.forward,
     required this.right,
@@ -24,7 +23,11 @@ class CameraFrame {
     required this.halfWidth,
     required this.halfHeight,
     required this.viewport,
-  });
+  })  : tanX = (halfWidth / focalLength) * 1.08,
+        tanY = (halfHeight / focalLength) * 1.08 {
+    invNormX = 1.0 / math.sqrt(1.0 + tanX * tanX);
+    invNormY = 1.0 / math.sqrt(1.0 + tanY * tanY);
+  }
 
   final Vec3 eye;
   final Vec3 forward;
@@ -35,9 +38,14 @@ class CameraFrame {
   final double halfHeight;
   final Size viewport;
 
+  /// Frustum half-slopes (with a small safety margin) for sphere culling.
+  final double tanX;
+  final double tanY;
+  late final double invNormX;
+  late final double invNormY;
+
   static const double nearClipZ = 0.35;
 
-  /// Transforms a world vertex into camera space `(cx, cy, cz)` where `cz` is depth forward.
   @pragma('vm:prefer-inline')
   Vec3 toCameraSpace(Vec3 world) {
     final rx = world.x - eye.x;
@@ -48,6 +56,23 @@ class CameraFrame {
       rx * up.x + ry * up.y + rz * up.z,
       rx * forward.x + ry * forward.y + rz * forward.z,
     );
+  }
+
+  /// Returns true when a bounding sphere is completely outside the view frustum.
+  @pragma('vm:prefer-inline')
+  bool isSphereCulled(Vec3 center, double radius) {
+    final rx = center.x - eye.x;
+    final ry = center.y - eye.y;
+    final rz = center.z - eye.z;
+    final cz = rx * forward.x + ry * forward.y + rz * forward.z;
+    if (cz + radius <= nearClipZ) return true;
+    final cx = rx * right.x + ry * right.y + rz * right.z;
+    if ((cx - cz * tanX) * invNormX > radius) return true;
+    if ((-cx - cz * tanX) * invNormX > radius) return true;
+    final cy = rx * up.x + ry * up.y + rz * up.z;
+    if ((cy - cz * tanY) * invNormY > radius) return true;
+    if ((-cy - cz * tanY) * invNormY > radius) return true;
+    return false;
   }
 
   @pragma('vm:prefer-inline')
@@ -70,9 +95,8 @@ class CameraFrame {
   }
 }
 
-/// True 3D perspective camera with zero roll (always keeps the desert horizon level),
-/// responsive across both 9:16 portrait phones and 16:9 widescreen browsers,
-/// with progressive stage framing as the outpost expands.
+/// Free-roaming 3D orbit camera (full 360° yaw, adjustable tilt, wide zoom) with
+/// smooth goal-based transitions for focus, rotate-by-90° and tilt presets.
 class Camera3D {
   Camera3D({
     this.yaw = defaultYaw,
@@ -82,44 +106,42 @@ class Camera3D {
     this.target = stageOneTarget,
   });
 
-  /// Horizontal azimuth (radians). Subtle tilt reveals 3D side faces cleanly.
   double yaw;
-
-  /// Elevation angle above ground plane (radians).
   double pitch;
-
-  /// Distance from target (controls zoom smoothly).
   double distance;
-
-  /// Base vertical/reference field of view in radians (~34° telephoto diorama look).
   double fovY;
-
-  /// World-space focus point.
   Vec3 target;
 
-  /// Goal framing that eases smoothly as the player unlocks parking & landmarks,
-  /// unless overridden by manual pan/zoom.
-  double _goalDistance = stageOneDistance;
-  Vec3 _goalTarget = stageOneTarget;
-  bool _hasSmoothingGoal = false;
+  double? _goalYaw;
+  double? _goalPitch;
+  double? _goalDistance;
+  Vec3? _goalTarget;
 
   static const double defaultYaw = -0.11;
-  static const double defaultPitch = 0.275;
+  static const double defaultPitch = 0.42;
   static const double defaultDistance = 36.5;
-  static const double stageOneDistance = 28.5;
+  static const double stageOneDistance = 26.0;
   static const double defaultFovY = 0.60;
-  static const Vec3 defaultTarget = Vec3(0.0, 3.9, 1.2);
-  static const Vec3 stageOneTarget = Vec3(-1.1, 2.7, 5.4);
+  static const Vec3 defaultTarget = Vec3(0.0, 1.8, -16.0);
+  static const Vec3 stageOneTarget = Vec3(-1.0, 1.6, -27.0);
 
-  static const double minDistance = 18.5;
-  static const double maxDistance = 54.0;
-  static const double minYaw = -0.48;
-  static const double maxYaw = 0.34;
+  static const double minDistance = 12.0;
+  static const double maxDistance = 110.0;
+  static const double minPitch = 0.30;
+  static const double maxPitch = 1.30;
 
-  /// Normalized zoom factor (1.0 at defaultDistance, >1 zoomed in, <1 zoomed out).
+  /// Tilt presets cycled by the VIEW button: cinematic -> isometric -> top-down build.
+  static const List<double> pitchPresets = [0.42, 0.80, 1.20];
+
+  /// Pan bounds (x = world X, y = world Z) covering the whole buildable desert + highway.
+  Rect panBounds = const Rect.fromLTRB(-70, -124, 70, 24);
+
+  bool get isAnimating =>
+      _goalYaw != null || _goalPitch != null || _goalDistance != null || _goalTarget != null;
+
   double get zoom => defaultDistance / distance;
   set zoom(double z) {
-    _hasSmoothingGoal = false;
+    _goalDistance = null;
     distance = (defaultDistance / z).clamp(minDistance, maxDistance);
   }
 
@@ -131,26 +153,17 @@ class Camera3D {
     return target + Vec3(sy * cp * distance, sp * distance, cy * cp * distance);
   }
 
-  /// Unit vector from camera eye toward target (into the screen).
   Vec3 get forward => (target - eye).normalized();
-
-  /// Camera right vector (always strictly horizontal -> guaranteed level horizon!).
   Vec3 get right => forward.cross(Vec3.up).normalized();
-
-  /// Camera up vector.
   Vec3 get up => right.cross(forward).normalized();
 
-  /// Responsive focal length that keeps the starter cart & outpost hero-sized on
-  /// 16:9 widescreen browsers while fitting the town cleanly on 9:16 mobile portrait.
   double focalLength(Size viewport) {
     final w = viewport.width;
     final h = viewport.height;
     final double baseDim;
     if (w > h) {
-      // Landscape / widescreen web: prevent ultra-wide FOV stretching so buildings stay chunky
       baseDim = math.max(h * 0.88, math.min(w * 0.58, h * 1.18));
     } else {
-      // Portrait mobile: frame valley width while preserving Monument Valley sky
       baseDim = math.min(w, h * 0.58);
     }
     return baseDim / (2.0 * math.tan(fovY * 0.5));
@@ -173,19 +186,14 @@ class Camera3D {
     );
   }
 
-  /// Projects a 3D world point to 2D canvas coordinates + distance along camera forward axis.
-  ProjectedPoint project(Vec3 world, Size viewport) {
-    return createFrame(viewport).project(world);
-  }
+  ProjectedPoint project(Vec3 world, Size viewport) => createFrame(viewport).project(world);
 
-  /// Exact Y screen coordinate of the mathematical 3D horizon line.
   double horizonScreenY(Size viewport) {
     final frame = createFrame(viewport);
     final horizDir = Vec3(frame.forward.x, 0.0, frame.forward.z).normalized();
     return frame.project(frame.eye + horizDir * 500.0).offset.dy;
   }
 
-  /// Intersects a screen tap ray with the horizontal ground plane y = planeY.
   Vec3 screenToGround(Offset screen, Size viewport, {double planeY = 0.0}) {
     final frame = createFrame(viewport);
     final ndcX = (screen.dx - frame.halfWidth) / frame.focalLength;
@@ -198,89 +206,155 @@ class Camera3D {
     return frame.eye + rayDir * t;
   }
 
-  /// Pans the camera target across the desert valley floor within safe bounds.
+  Vec3 _clampTarget(Vec3 t) => Vec3(
+        t.x.clamp(panBounds.left, panBounds.right),
+        t.y,
+        t.z.clamp(panBounds.top, panBounds.bottom),
+      );
+
   void panByScreenDelta(Offset delta, Size viewport) {
-    _hasSmoothingGoal = false;
+    _goalTarget = null;
     final f = focalLength(viewport);
     final scale = distance / f;
     final rgt = right;
     final flatFwd = Vec3(forward.x, 0, forward.z).normalized();
-
-    final moveRight = -delta.dx * scale * 0.85;
-    final moveFwd = delta.dy * scale * 1.15;
-
-    final next = target + rgt * moveRight + flatFwd * moveFwd;
-    target = Vec3(
-      next.x.clamp(-10.5, 10.5),
-      target.y,
-      next.z.clamp(-7.0, 9.0),
-    );
+    // Steeper tilt -> screen-vertical drags map more directly to ground movement.
+    final fwdGain = 1.0 / math.max(0.35, math.sin(pitch));
+    final moveRight = -delta.dx * scale;
+    final moveFwd = delta.dy * scale * fwdGain;
+    target = _clampTarget(target + rgt * moveRight + flatFwd * moveFwd);
   }
 
-  /// Gently orbits horizontal camera azimuth within diorama-safe bounds.
+  /// Pans relative to the current view heading (keyboard WASD / arrow keys).
+  void panRelative(double rightUnits, double forwardUnits) {
+    _goalTarget = null;
+    final flatFwd = Vec3(forward.x, 0, forward.z).normalized();
+    target = _clampTarget(target + right * rightUnits + flatFwd * forwardUnits);
+  }
+
   void orbitByDelta(double deltaRadians) {
-    yaw = (yaw + deltaRadians).clamp(minYaw, maxYaw);
+    _goalYaw = null;
+    yaw = _wrapAngle(yaw + deltaRadians);
+  }
+
+  void tiltByDelta(double deltaRadians) {
+    _goalPitch = null;
+    pitch = (pitch + deltaRadians).clamp(minPitch, maxPitch);
   }
 
   void zoomByFactor(double factor) {
-    _hasSmoothingGoal = false;
+    _goalDistance = null;
     distance = (distance / factor).clamp(minDistance, maxDistance);
   }
 
-  /// Sets cinematic stage framing goals as the outpost expands from a tiny cart to a full town.
-  void setStageFraming({
-    required int parkingTier,
-    required int builtCount,
+  /// Smoothly rotates the view by ±90° around the current focus point.
+  void rotateQuarter(int direction) {
+    final base = _goalYaw ?? yaw;
+    _goalYaw = base + direction * math.pi * 0.5;
+  }
+
+  /// Cycles cinematic -> isometric -> top-down tilt presets.
+  void cyclePitchPreset() {
+    final current = _goalPitch ?? pitch;
+    double next = pitchPresets.first;
+    for (final p in pitchPresets) {
+      if (p > current + 0.05) {
+        next = p;
+        break;
+      }
+    }
+    _goalPitch = next;
+  }
+
+  /// Ensures the view is at least [minimum] tilt (used by build tools for readable grids).
+  void ensureMinPitch(double minimum) {
+    if ((_goalPitch ?? pitch) < minimum) _goalPitch = minimum;
+  }
+
+  void focusOn(
+    Vec3 newTarget, {
+    double? distance,
+    double? pitch,
+    double? yaw,
     bool immediate = false,
   }) {
-    final (dist, tgt) = _computeStageFraming(parkingTier, builtCount);
-    _goalDistance = dist;
-    _goalTarget = tgt;
+    final t = _clampTarget(newTarget);
     if (immediate) {
-      distance = dist;
-      target = tgt;
-      yaw = defaultYaw;
-      pitch = defaultPitch;
-      _hasSmoothingGoal = false;
-    } else {
-      _hasSmoothingGoal = true;
+      target = t;
+      if (distance != null) this.distance = distance.clamp(minDistance, maxDistance);
+      if (pitch != null) this.pitch = pitch.clamp(minPitch, maxPitch);
+      if (yaw != null) this.yaw = yaw;
+      _goalTarget = null;
+      _goalDistance = null;
+      _goalPitch = null;
+      _goalYaw = null;
+      return;
     }
+    _goalTarget = t;
+    if (distance != null) _goalDistance = distance.clamp(minDistance, maxDistance);
+    if (pitch != null) _goalPitch = pitch.clamp(minPitch, maxPitch);
+    if (yaw != null) _goalYaw = yaw;
   }
 
   void updateSmoothing(double dt) {
-    if (!_hasSmoothingGoal) return;
-    final t = (dt * 2.8).clamp(0.0, 1.0);
-    distance = distance + (_goalDistance - distance) * t;
-    target = target.lerp(_goalTarget, t);
-    if ((distance - _goalDistance).abs() < 0.06 &&
-        (target - _goalTarget).lengthSq < 0.004) {
-      distance = _goalDistance;
-      target = _goalTarget;
-      _hasSmoothingGoal = false;
+    if (!isAnimating) return;
+    final t = (dt * 4.2).clamp(0.0, 1.0);
+
+    final gy = _goalYaw;
+    if (gy != null) {
+      final diff = gy - yaw;
+      if (diff.abs() < 0.002) {
+        yaw = _wrapAngle(gy);
+        _goalYaw = null;
+      } else {
+        yaw += diff * t;
+      }
+    }
+    final gp = _goalPitch;
+    if (gp != null) {
+      if ((gp - pitch).abs() < 0.002) {
+        pitch = gp;
+        _goalPitch = null;
+      } else {
+        pitch += (gp - pitch) * t;
+      }
+    }
+    final gd = _goalDistance;
+    if (gd != null) {
+      if ((gd - distance).abs() < 0.05) {
+        distance = gd;
+        _goalDistance = null;
+      } else {
+        distance += (gd - distance) * t;
+      }
+    }
+    final gt = _goalTarget;
+    if (gt != null) {
+      if ((gt - target).lengthSq < 0.003) {
+        target = gt;
+        _goalTarget = null;
+      } else {
+        target = target.lerp(gt, t);
+      }
     }
   }
 
-  static (double, Vec3) _computeStageFraming(int parkingTier, int builtCount) {
-    if (parkingTier <= 0 && builtCount <= 1) {
-      return (stageOneDistance, stageOneTarget);
-    }
-    if (parkingTier == 1 && builtCount <= 2) {
-      return (32.5, const Vec3(-0.6, 3.2, 4.1));
-    }
-    if (builtCount <= 4 && parkingTier <= 2) {
-      return (36.0, const Vec3(0.0, 3.7, 2.3));
-    }
-    return (39.2, defaultTarget);
-  }
-
-  void reset({int parkingTier = 3, int builtCount = 7}) {
-    yaw = defaultYaw;
-    pitch = defaultPitch;
+  void reset({Vec3 target = stageOneTarget, double distance = stageOneDistance}) {
     fovY = defaultFovY;
-    setStageFraming(
-      parkingTier: parkingTier,
-      builtCount: builtCount,
+    focusOn(
+      target,
+      distance: distance,
+      pitch: defaultPitch,
+      yaw: defaultYaw,
       immediate: true,
     );
+  }
+
+  static double _wrapAngle(double a) {
+    const twoPi = math.pi * 2.0;
+    double r = a % twoPi;
+    if (r > math.pi) r -= twoPi;
+    if (r < -math.pi) r += twoPi;
+    return r;
   }
 }

@@ -11,33 +11,33 @@ class DesertTerrain {
   const DesertTerrain._();
 
   /// Continuous ground height function.
-  /// Flat (`y = 0`) across the entire outpost valley & highway corridor,
+  /// Flat (`y = 0`) across the whole 128 x 128 buildable desert + highway corridor,
   /// smoothly rising into faceted low-poly dunes & canyon foothills around the perimeter.
   static double heightAt(double x, double z) {
-    final flatDistX = math.max(0.0, x.abs() - 14.5);
-    final flatDistZ = z < -11.5
-        ? (-11.5 - z)
-        : (z > 17.5 ? (z - 17.5) : 0.0);
+    final flatDistX = math.max(0.0, x.abs() - 72.0);
+    final flatDistZ = z < -124.0
+        ? (-124.0 - z)
+        : (z > 24.0 ? (z - 24.0) : 0.0);
     final radialOut = math.sqrt(flatDistX * flatDistX + flatDistZ * flatDistZ);
     if (radialOut <= 0.001) return 0.0;
 
-    final blend = (radialOut / 14.0).clamp(0.0, 1.0);
+    final blend = (radialOut / 40.0).clamp(0.0, 1.0);
     final smooth = blend * blend * (3.0 - 2.0 * blend);
 
-    final wave1 = math.sin(x * 0.09 + z * 0.07) * 1.15;
-    final wave2 = math.cos(x * 0.16 - z * 0.11) * 0.65;
-    final farRise = z < -28.0 ? ((-28.0 - z) * 0.045).clamp(0.0, 2.2) : 0.0;
-    final sideRise = x.abs() > 26.0 ? ((x.abs() - 26.0) * 0.035).clamp(0.0, 2.4) : 0.0;
+    final wave1 = math.sin(x * 0.045 + z * 0.035) * 2.3;
+    final wave2 = math.cos(x * 0.08 - z * 0.055) * 1.3;
+    final farRise = z < -160.0 ? ((-160.0 - z) * 0.06).clamp(0.0, 6.0) : 0.0;
+    final sideRise = x.abs() > 110.0 ? ((x.abs() - 110.0) * 0.05).clamp(0.0, 6.0) : 0.0;
 
-    return math.max(0.0, (wave1 + wave2 + 0.95 + farRise + sideRise) * smooth);
+    return math.max(0.0, (wave1 + wave2 + 1.9 + farRise + sideRise) * smooth);
   }
 
   static void build(MeshBuilder mesh, {int parkingTier = 0}) {
     const xs = <double>[
-      -128, -94, -68, -48, -34, -24, -16, -10, -4, 0, 4, 10, 16, 24, 34, 48, 68, 94, 128,
+      -340, -260, -200, -150, -110, -90, -72, -48, -24, 0, 24, 48, 72, 90, 110, 150, 200, 260, 340,
     ];
     const zs = <double>[
-      -120, -96, -76, -60, -46, -34, -24, -14, -8, -2, 4, 10, 16, 22, 32,
+      -380, -300, -240, -190, -160, -140, -124, -96, -64, -40, -16, 4, 16, 24, 40, 70, 110,
     ];
 
     final rows = zs.length;
@@ -61,14 +61,14 @@ class DesertTerrain {
         final avgX = (v00.x + v10.x) * 0.5;
         final avgZ = (v00.z + v11.z) * 0.5;
         final avgY = (v00.y + v10.y + v11.y + v01.y) * 0.25;
-        final distFade = avgZ < -32.0
-            ? ((-32.0 - avgZ) / 62.0).clamp(0.0, 0.58)
+        final distFade = avgZ < -130.0
+            ? ((-130.0 - avgZ) / 200.0).clamp(0.0, 0.58)
             : 0.0;
 
-        final earthMix = (avgY / 3.8).clamp(0.0, 1.0);
-        final farEarthMix = avgZ < -18.0 ? ((-18.0 - avgZ) / 50.0).clamp(0.0, 0.55) : 0.0;
+        final earthMix = (avgY / 6.0).clamp(0.0, 1.0);
+        final farEarthMix = avgZ < -124.0 ? ((-124.0 - avgZ) / 160.0).clamp(0.0, 0.55) : 0.0;
         // Subtle organic variation across valley floor so flat sand never looks plain
-        final valleyRipple = 0.045 * (0.5 + 0.5 * math.sin(avgX * 0.28 + avgZ * 0.34));
+        final valleyRipple = 0.045 * (0.5 + 0.5 * math.sin(avgX * 0.11 + avgZ * 0.13));
         final facetTint = (((r + c).isEven) ? 0.0 : 0.055) + valleyRipple;
 
         Color baseCol = Color.lerp(
@@ -90,25 +90,31 @@ class DesertTerrain {
       }
     }
 
-    // Winding dry desert wash / arroyo ribbon meandering behind the town toward Monument Valley
+    // Winding dry desert washes / arroyo ribbons meandering across the open desert floor
     final washPatches = <List<Vec3>>[
       const [
-        Vec3(-18.5, 0.012, -11.2),
-        Vec3(-15.5, 0.012, -9.4),
-        Vec3(-8.2, 0.012, -10.8),
-        Vec3(-10.5, 0.012, -12.6),
+        Vec3(-48.0, 0.012, -70.0),
+        Vec3(-40.0, 0.012, -64.0),
+        Vec3(-22.0, 0.012, -68.0),
+        Vec3(-28.0, 0.012, -74.0),
       ],
       const [
-        Vec3(-10.5, 0.012, -12.6),
-        Vec3(-8.2, 0.012, -10.8),
-        Vec3(1.5, 0.012, -11.6),
-        Vec3(-0.5, 0.012, -13.5),
+        Vec3(-28.0, 0.012, -74.0),
+        Vec3(-22.0, 0.012, -68.0),
+        Vec3(2.0, 0.012, -72.0),
+        Vec3(-2.0, 0.012, -78.0),
       ],
       const [
-        Vec3(6.8, 0.012, 3.2),
-        Vec3(9.8, 0.012, 4.4),
-        Vec3(13.6, 0.012, 1.8),
-        Vec3(11.2, 0.012, 0.6),
+        Vec3(24.0, 0.012, -6.0),
+        Vec3(34.0, 0.012, -2.0),
+        Vec3(48.0, 0.012, -10.0),
+        Vec3(40.0, 0.012, -14.0),
+      ],
+      const [
+        Vec3(30.0, 0.012, -96.0),
+        Vec3(44.0, 0.012, -90.0),
+        Vec3(58.0, 0.012, -98.0),
+        Vec3(46.0, 0.012, -104.0),
       ],
     ];
     for (final poly in washPatches) {
@@ -118,38 +124,6 @@ class DesertTerrain {
         layer: RenderLayer.groundDecal,
         depthBias: 0.45,
       );
-    }
-
-    // Early-stage rustic sandstone stepping stones & worn footpath leading to the tiny cart!
-    if (parkingTier <= 1) {
-      mesh.addGroundPoly(
-        const [
-          Vec3(-3.8, 0.014, 5.4),
-          Vec3(-3.5, 0.014, 10.8),
-          Vec3(-1.3, 0.014, 10.8),
-          Vec3(-1.5, 0.014, 5.4),
-        ],
-        DesertPalette.arroyoSand,
-        layer: RenderLayer.groundDecal,
-        depthBias: 0.35,
-      );
-      for (final (sx, sz, w, d) in const [
-        (-2.8, 6.5, 0.56, 0.36),
-        (-2.3, 7.3, 0.48, 0.34),
-        (-2.7, 8.1, 0.54, 0.38),
-        (-2.4, 9.0, 0.50, 0.34),
-      ]) {
-        mesh.addGroundRect(
-          sx,
-          0.019,
-          sz,
-          w,
-          d,
-          DesertPalette.sandstoneLight,
-          layer: RenderLayer.groundDecal,
-          depthBias: 0.12,
-        );
-      }
     }
   }
 }

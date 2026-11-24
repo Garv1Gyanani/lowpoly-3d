@@ -32,7 +32,8 @@ class Poly3D {
     this.outlineColor,
     this.sortGroupAnchor,
     this.subOrder = 0,
-  }) : centroid = _computeCentroid(vertices);
+  }) : centroid = _computeCentroid(vertices),
+       radius = _computeRadius(vertices);
 
   final List<Vec3> vertices;
   final Vec3 normal;
@@ -48,8 +49,24 @@ class Poly3D {
   final double distanceFade;
   final Color? outlineColor;
   final Vec3 centroid;
+
+  /// Bounding-sphere radius around [centroid] used for fast frustum culling.
+  final double radius;
   final Vec3? sortGroupAnchor;
   final int subOrder;
+
+  static double _computeRadius(List<Vec3> verts) {
+    final c = _computeCentroid(verts);
+    double maxSq = 0.0;
+    for (final v in verts) {
+      final dx = v.x - c.x;
+      final dy = v.y - c.y;
+      final dz = v.z - c.z;
+      final d = dx * dx + dy * dy + dz * dz;
+      if (d > maxSq) maxSq = d;
+    }
+    return math.sqrt(maxSq);
+  }
 
   static Vec3 _computeCentroid(List<Vec3> verts) {
     double x = 0, y = 0, z = 0;
@@ -477,6 +494,96 @@ class MeshBuilder {
     }
   }
 
+  /// Subdivides large world-layer quads (`> 0.90u`) into flat-shaded sub-quads so
+  /// wide tabletops, walls & roofs sort cleanly against nearby props at every 360° angle.
+  void _addBoxFace(
+    Vec3 a,
+    Vec3 b,
+    Vec3 c,
+    Vec3 d,
+    Color color, {
+    Color? emissiveColor,
+    double emissiveStrength = 0.0,
+    bool emissiveNightOnly = true,
+    RenderLayer layer = RenderLayer.world,
+    double depthBias = 0.0,
+    double distanceFade = 0.0,
+    int? subOrder,
+  }) {
+    final allowSubdiv = layer == RenderLayer.world &&
+        distanceFade == 0.0 &&
+        _sortGroupAnchor == null;
+    if (!allowSubdiv) {
+      addQuad(
+        a,
+        b,
+        c,
+        d,
+        color,
+        emissiveColor: emissiveColor,
+        emissiveStrength: emissiveStrength,
+        emissiveNightOnly: emissiveNightOnly,
+        layer: layer,
+        depthBias: depthBias,
+        distanceFade: distanceFade,
+        subOrder: subOrder,
+      );
+      return;
+    }
+
+    final lenU = (b - a).length;
+    final lenV = (d - a).length;
+    final nu = lenU > 0.95 ? (lenU / 0.90).ceil().clamp(1, 4) : 1;
+    final nv = lenV > 0.95 ? (lenV / 0.90).ceil().clamp(1, 4) : 1;
+
+    if (nu == 1 && nv == 1) {
+      addQuad(
+        a,
+        b,
+        c,
+        d,
+        color,
+        emissiveColor: emissiveColor,
+        emissiveStrength: emissiveStrength,
+        emissiveNightOnly: emissiveNightOnly,
+        layer: layer,
+        depthBias: depthBias,
+        distanceFade: distanceFade,
+        subOrder: subOrder,
+      );
+      return;
+    }
+
+    Vec3 sample(double u, double v) {
+      final top = a.lerp(b, u);
+      final bot = d.lerp(c, u);
+      return top.lerp(bot, v);
+    }
+
+    for (int iu = 0; iu < nu; iu++) {
+      final u0 = iu / nu;
+      final u1 = (iu + 1) / nu;
+      for (int iv = 0; iv < nv; iv++) {
+        final v0 = iv / nv;
+        final v1 = (iv + 1) / nv;
+        addQuad(
+          sample(u0, v0),
+          sample(u1, v0),
+          sample(u1, v1),
+          sample(u0, v1),
+          color,
+          emissiveColor: emissiveColor,
+          emissiveStrength: emissiveStrength,
+          emissiveNightOnly: emissiveNightOnly,
+          layer: layer,
+          depthBias: depthBias,
+          distanceFade: distanceFade,
+          subOrder: subOrder,
+        );
+      }
+    }
+  }
+
   /// Adds a 3D box with bottom center at (cx, yBottom, cz) and size (w, h, d).
   void addBox(
     double cx,
@@ -515,7 +622,7 @@ class MeshBuilder {
     final p011 = Vec3(x0, y1, z1);
 
     if (!skipTop) {
-      addQuad(
+      _addBoxFace(
         p010,
         p011,
         p111,
@@ -530,7 +637,7 @@ class MeshBuilder {
         subOrder: subOrder,
       );
     }
-    addQuad(
+    _addBoxFace(
       p001,
       p101,
       p111,
@@ -544,7 +651,7 @@ class MeshBuilder {
       distanceFade: distanceFade,
       subOrder: subOrder,
     );
-    addQuad(
+    _addBoxFace(
       p100,
       p000,
       p010,
@@ -558,7 +665,7 @@ class MeshBuilder {
       distanceFade: distanceFade,
       subOrder: subOrder,
     );
-    addQuad(
+    _addBoxFace(
       p101,
       p100,
       p110,
@@ -572,7 +679,7 @@ class MeshBuilder {
       distanceFade: distanceFade,
       subOrder: subOrder,
     );
-    addQuad(
+    _addBoxFace(
       p000,
       p001,
       p011,
@@ -588,7 +695,7 @@ class MeshBuilder {
     );
 
     if (!skipBottom) {
-      addQuad(
+      _addBoxFace(
         p001,
         p000,
         p100,
@@ -919,7 +1026,7 @@ class MeshBuilder {
     Color color, {
     Color? stripeColor,
     int stripes = 1,
-    double depthBias = -0.15,
+    double depthBias = 0.0,
   }) {
     final x0 = cx - w * 0.5;
     final zBack = cz - d * 0.5;
@@ -945,7 +1052,7 @@ class MeshBuilder {
         Vec3(sx1, yFront, zFront),
         Vec3(sx0, yFront, zFront),
         c,
-        depthBias: depthBias - 0.05,
+        depthBias: depthBias,
         doubleSided: true,
       );
     }
@@ -959,7 +1066,7 @@ class MeshBuilder {
     double h,
     Color dayColor,
     Color nightGlow, {
-    double depthBias = -0.25,
+    double depthBias = 0.0,
   }) {
     final hw = w * 0.5;
     final hh = h * 0.5;
@@ -985,7 +1092,7 @@ class MeshBuilder {
     double h,
     Color dayColor,
     Color nightGlow, {
-    double depthBias = -0.25,
+    double depthBias = 0.0,
   }) {
     final hd = d * 0.5;
     final hh = h * 0.5;
@@ -1011,7 +1118,7 @@ class MeshBuilder {
     double h,
     Color dayColor,
     Color nightGlow, {
-    double depthBias = -0.25,
+    double depthBias = 0.0,
   }) {
     final hd = d * 0.5;
     final hh = h * 0.5;

@@ -89,16 +89,36 @@ class GameMenuDialog extends StatelessWidget {
 
                     Row(
                       children: [
-                        _miniBadge('LANDMARKS', '${controller.builtCount}/8'),
+                        _miniBadge('STAGE', '${controller.outpostStage}/6'),
                         const SizedBox(width: 6),
-                        _miniBadge('PARKING', '${controller.currentParkingTierData.spaces}'),
+                        _miniBadge('ACCESS', '${(controller.averageAccessScore * 100).round()}%'),
                         const SizedBox(width: 6),
-                        _miniBadge('VISITORS', '${controller.totalCustomersServed}'),
+                        _miniBadge('PARKING', '${controller.totalParkingSpaces}'),
                         const SizedBox(width: 6),
-                        _miniBadge('TIP BONUS', '+${controller.decorations.length * 4}%'),
+                        _miniBadge('ROADS', '${controller.roadNetwork.roadCount}'),
                       ],
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 8),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: GameHudColors.parchmentDark,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: GameHudColors.woodRim.withValues(alpha: 0.4),
+                        ),
+                      ),
+                      child: Text(
+                        'Stage ${controller.outpostStage} · ${controller.stageInfo.title} — Next: ${controller.stageInfo.nextRequirement}',
+                        style: DesertTypography.ui(
+                          size: 10.5,
+                          weight: FontWeight.w700,
+                          color: GameHudColors.ink,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
 
                     Flexible(
                       child: SingleChildScrollView(

@@ -37,7 +37,7 @@ class DesertDinerBuilding {
       }
 
       // Main retro diner hall + streamlined faceted chrome corner drums for distinct Googie silhouette!
-      mesh.addBox(0, 0.22, -0.28, 5.15, 2.62, 3.02, DesertPalette.cream);
+      mesh.addBox(0, 0.22, -0.28, 5.15, 2.62, 3.02, DesertPalette.cream, skipTop: true);
       for (final cx in [-2.52, 2.52]) {
         mesh.addFrustum(
           cx,
@@ -54,8 +54,8 @@ class DesertDinerBuilding {
         );
       }
 
-      mesh.addBox(0, 2.38, -0.28, 5.75, 0.30, 3.16, DesertPalette.awningRed);
-      mesh.addBox(0, 2.16, -0.28, 5.72, 0.18, 3.12, DesertPalette.turquoise);
+      mesh.addBox(0, 2.38, -0.28, 5.75, 0.30, 3.16, DesertPalette.awningRed, skipTop: true);
+      mesh.addBox(0, 2.16, -0.28, 5.72, 0.18, 3.12, DesertPalette.turquoise, skipTop: true);
       mesh.addBox(
         0,
         2.72,
@@ -66,7 +66,7 @@ class DesertDinerBuilding {
         DesertPalette.awningRed,
         emissiveColor: DesertPalette.neonCoral,
         emissiveStrength: 0.95,
-        depthBias: -0.16,
+        skipTop: true,
       );
       mesh.addBox(0, 2.84, -0.28, 5.84, 0.26, 3.26, DesertPalette.creamDark);
 
@@ -85,22 +85,21 @@ class DesertDinerBuilding {
         topColor: DesertPalette.cream,
       );
 
-      // Entry vestibule with Art-Deco chrome pilasters & canopy overhang
-      mesh.addBox(0, 0.22, 1.38, 1.62, 2.20, 0.70, DesertPalette.cream);
-      mesh.addBox(-0.78, 0.22, 1.72, 0.14, 2.00, 0.14, DesertPalette.metal);
-      mesh.addBox(0.78, 0.22, 1.72, 0.14, 2.00, 0.14, DesertPalette.metal);
+      // Entry vestibule with Art-Deco chrome pilasters & canopy overhang (stopping cleanly under canopy at y = 2.16)
+      mesh.addBox(0, 0.22, 1.38, 1.62, 1.94, 0.70, DesertPalette.cream, skipTop: true);
+      mesh.addBox(-0.78, 0.22, 1.72, 0.14, 1.94, 0.14, DesertPalette.metal, skipTop: true);
+      mesh.addBox(0.78, 0.22, 1.72, 0.14, 1.94, 0.14, DesertPalette.metal, skipTop: true);
       mesh.addBox(0, 2.16, 1.66, 2.10, 0.14, 0.82, DesertPalette.metal);
       mesh.addBox(
         0,
-        2.12,
-        2.06,
+        2.18,
+        2.10,
         2.12,
         0.06,
         0.06,
         DesertPalette.turquoise,
         emissiveColor: DesertPalette.neonTurquoise,
         emissiveStrength: 0.95,
-        depthBias: -0.20,
       );
       MeshParts.addFramedDoor(
         mesh,

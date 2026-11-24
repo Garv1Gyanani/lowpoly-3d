@@ -11,41 +11,56 @@ import '../models/game_models.dart';
 import '../theme/desert_palette.dart';
 import '../world/outpost_layout.dart';
 import 'outpost_storage.dart';
+import 'road_network.dart';
+import 'world_grid.dart';
+
+part 'game_controller_building.dart';
+part 'game_controller_persistence.dart';
+part 'game_controller_traffic.dart';
 
 enum OutpostPreset {
   fullCity,
   stageOneCareer,
 }
 
-/// Central simulation and state controller for Desert Outpost.
+class _RenderNotifier extends ChangeNotifier {
+  void ping() => notifyListeners();
+}
+
+/// Central simulation & state hub for Desert Outpost.
 ///
-/// Performance architecture:
-/// - [renderListenable] ticks at 60–120 Hz solely to repaint the 3D `CustomPaint` canvas
-///   and smoothly bob in-world bubbles.
-/// - `GameController` itself (`ChangeNotifier`) notifies HUD widgets ONLY when discrete
-///   economy/UI values (`cash.floor()`, `parkingTier`, `builtCount`, upgrades, milestones)
-///   actually change—eliminating 60 Hz widget-tree rebuild churn!
+/// Split across library parts for maintainability:
+/// - `game_controller.dart` – state, presets, progression, economy, tick, camera
+/// - `game_controller_building.dart` – land parcels, road line tool, freeform placement
+/// - `game_controller_traffic.dart` – highway traffic, parking & visitor AI
+/// - `game_controller_persistence.dart` – save schema v3 + legacy migration
 class GameController extends ChangeNotifier {
   GameController({
     OutpostPreset initialPreset = OutpostPreset.stageOneCareer,
     this.enablePersistence = false,
   }) {
-    _initPlots(initialPreset);
+    _suppressStageFx = true;
+    _initWorld(initialPreset);
     _initMilestones();
     if (enablePersistence) {
       _loadSavedState();
     }
-    camera.reset(parkingTier: parkingTier, builtCount: builtCount);
+    _recomputeNetwork();
+    _resetCameraToTown();
     _seedInitialTraffic();
+    _suppressStageFx = false;
     _lastHudCashFloor = cash.floor();
+    _lastClaimableCount = claimableMilestoneCount;
   }
 
   final bool enablePersistence;
   final math.Random _rng = math.Random(42);
   final Camera3D camera = Camera3D();
+  final RoadNetwork roadNetwork = RoadNetwork();
+  final WorldGrid worldGrid = WorldGrid();
 
-  /// High-frequency repaint signal exclusively for 3D canvas & projected world bubbles.
-  final ChangeNotifier renderListenable = ChangeNotifier();
+  final _RenderNotifier _renderNotifier = _RenderNotifier();
+  Listenable get renderListenable => _renderNotifier;
 
   // Economy & progression state
   double cash = 0.0;
@@ -53,30 +68,55 @@ class GameController extends ChangeNotifier {
   int totalCustomersServed = 0;
   int totalTaps = 0;
   int tapUpgradeLevel = 1;
-  int parkingTier = 0;
   OutpostPreset activePreset = OutpostPreset.stageOneCareer;
   bool soundEnabled = true;
 
-  /// Offline welcome-back reward banner (`> 0` when returning after time away).
   double pendingOfflineWelcomeCash = 0.0;
   int pendingOfflineMinutes = 0;
 
-  // Time & lighting
+  // Time & lighting (memoized to avoid per-frame DesertLighting allocations)
   double animTime = 0.0;
   double timeOfDay = 0.37;
   bool autoDayNight = true;
   static const double _dayCycleRate = 0.0085;
+  double _cachedLightingTime = -1.0;
+  DesertLighting? _cachedLighting;
 
-  DesertLighting get lighting => DesertLighting.fromTime(timeOfDay);
+  DesertLighting get lighting {
+    if (_cachedLighting == null || _cachedLightingTime != timeOfDay) {
+      _cachedLightingTime = timeOfDay;
+      _cachedLighting = DesertLighting.fromTime(timeOfDay);
+    }
+    return _cachedLighting!;
+  }
 
   // World entities
   late List<PlotState> plots;
+  final List<ParkingLotEntity> parkingLots = [];
   final List<VehicleEntity> vehicles = [];
   final List<VisitorEntity> visitors = [];
   final List<FloatingCash> floatingCash = [];
   final List<Particle3D> particles = [];
   final List<PlacedDecoration> decorations = [];
   late List<MilestoneData> milestones;
+
+  static const int maxDecorations = 16;
+
+  // Interactive build tool state
+  WorldToolMode toolMode = WorldToolMode.play;
+  RoadTier activeRoadTier = RoadTier.dirt;
+  bool roadEraseMode = false;
+  GridCell? roadLineStart;
+  GridCell? roadLineEnd;
+  BusinessType? pendingBuildingType;
+  PlotState? relocatingPlot;
+  ParkingLotKind? pendingParkingKind;
+  ParkingLotEntity? relocatingParkingLot;
+  bool relocatingParkingIsUpgrade = false;
+  (DecorationKind, String, double)? pendingDecoration;
+  int ghostGridX = 0;
+  int ghostGridZ = -12;
+  int ghostRotation = 0;
 
   String? selectedPlotId;
   int _nextEntityId = 1;
@@ -85,30 +125,39 @@ class GameController extends ChangeNotifier {
   int _lastHudCashFloor = 0;
   int _lastClaimableCount = 0;
 
-  static const List<Vec3> _decorationSpots = [
-    Vec3(-7.0, 0, 6.2),
-    Vec3(0.4, 0, 5.8),
-    Vec3(8.4, 0, 5.6),
-    Vec3(-11.4, 0, 1.5),
-    Vec3(12.0, 0, -2.5),
-    Vec3(-3.0, 0, -5.0),
-    Vec3(1.8, 0, -5.2),
-    Vec3(-11.2, 0, -4.5),
-  ];
+  // Cached progression metrics (refreshed only when the world changes, never per frame)
+  int _highestStage = 1;
+  int _connectedBuiltCount = 0;
+  int _totalParkingSpaces = 0;
+  int _parkingTier = 0;
+  double _averageAccess = 0.0;
+  bool _suppressStageFx = false;
+
+  /// Default Full-City landmark layout `(gridX, gridZ)` around a paved desert loop.
+  static const Map<String, (int, int)> _cityLayout = {
+    'vendor': (-8, -8),
+    'food_stand': (-4, -8),
+    'oasis_plaza': (6, -5),
+    'mart': (-8, -16),
+    'diner': (-2, -16),
+    'gas_station': (4, -9),
+    'motel': (-8, -23),
+    'lookout': (2, -23),
+  };
+
+  /// Career start: the tiny cart sits in the middle of the desert, ~40 units from Route 163.
+  static const (int, int) _careerCartCell = (-1, -14);
 
   @override
   void dispose() {
     if (enablePersistence) {
       saveState();
     }
-    renderListenable.dispose();
+    _renderNotifier.dispose();
     super.dispose();
   }
 
-  void _notifyRender() {
-    // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
-    renderListenable.notifyListeners();
-  }
+  void _notifyRender() => _renderNotifier.ping();
 
   void _notifyBoth() {
     _lastHudCashFloor = cash.floor();
@@ -141,117 +190,107 @@ class GameController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _initPlots(OutpostPreset preset) {
+  // --- World / Preset Initialization ---
+
+  List<PlotState> _buildPlots({required bool full}) {
+    PlotState make(
+      String id,
+      BusinessType type,
+      double fw,
+      double fd, {
+      required bool built,
+      required int level,
+    }) {
+      final (gx, gz) = (!full && id == 'vendor') ? _careerCartCell : _cityLayout[id]!;
+      return PlotState(
+        id: id,
+        businessType: type,
+        gridX: gx,
+        gridZ: gz,
+        footprintWidth: fw,
+        footprintDepth: fd,
+        isBuilt: built,
+        level: level,
+      );
+    }
+
+    return [
+      make('vendor', BusinessType.vendorStall, 3.7, 2.9, built: true, level: full ? 4 : 1),
+      make('food_stand', BusinessType.foodStand, 3.9, 3.0, built: full, level: full ? 3 : 1),
+      make('oasis_plaza', BusinessType.oasisPlaza, 4.1, 3.2, built: false, level: 1),
+      make('mart', BusinessType.convenienceStore, 5.0, 4.0, built: full, level: full ? 3 : 1),
+      make('diner', BusinessType.desertDiner, 6.1, 4.5, built: full, level: full ? 3 : 1),
+      make('gas_station', BusinessType.gasStation, 5.6, 4.6, built: full, level: full ? 3 : 1),
+      make('motel', BusinessType.desertMotel, 6.9, 4.4, built: full, level: full ? 3 : 1),
+      make('lookout', BusinessType.lookoutCamp, 6.4, 4.4, built: full, level: full ? 3 : 1),
+    ];
+  }
+
+  void _initWorld(OutpostPreset preset) {
     activePreset = preset;
     final full = preset == OutpostPreset.fullCity;
-
-    // Subtle organic inward angles on outer landmarks break up the rigid 0° grid!
-    plots = [
-      PlotState(
-        id: 'vendor',
-        businessType: BusinessType.vendorStall,
-        position: const Vec3(-2.4, 0, 4.9),
-        footprintWidth: 3.7,
-        footprintDepth: 2.9,
-        visitorStopPoint: const Vec3(-2.4, 0, 6.7),
-        yaw: 0.03,
-        isBuilt: true,
-        level: full ? 4 : 1,
-      ),
-      PlotState(
-        id: 'food_stand',
-        businessType: BusinessType.foodStand,
-        position: const Vec3(3.6, 0, 4.9),
-        footprintWidth: 3.9,
-        footprintDepth: 3.0,
-        visitorStopPoint: const Vec3(3.6, 0, 6.7),
-        yaw: -0.06,
-        isBuilt: full,
-        level: full ? 3 : 1,
-      ),
-      PlotState(
-        id: 'oasis_plaza',
-        businessType: BusinessType.oasisPlaza,
-        position: const Vec3(-7.7, 0, 4.8),
-        footprintWidth: 4.1,
-        footprintDepth: 3.2,
-        visitorStopPoint: const Vec3(-7.5, 0, 6.7),
-        yaw: 0.13,
-        isBuilt: false,
-        level: 1,
-      ),
-      PlotState(
-        id: 'mart',
-        businessType: BusinessType.convenienceStore,
-        position: const Vec3(-6.8, 0, -0.7),
-        footprintWidth: 5.0,
-        footprintDepth: 4.0,
-        visitorStopPoint: const Vec3(-6.7, 0, 2.0),
-        yaw: 0.08,
-        isBuilt: full,
-        level: full ? 3 : 1,
-      ),
-      PlotState(
-        id: 'diner',
-        businessType: BusinessType.desertDiner,
-        position: const Vec3(0.0, 0, -1.5),
-        footprintWidth: 6.1,
-        footprintDepth: 4.5,
-        visitorStopPoint: const Vec3(0.0, 0, 2.0),
-        yaw: 0.0,
-        isBuilt: full,
-        level: full ? 3 : 1,
-      ),
-      PlotState(
-        id: 'gas_station',
-        businessType: BusinessType.gasStation,
-        position: const Vec3(7.0, 0, -0.7),
-        footprintWidth: 5.6,
-        footprintDepth: 4.6,
-        visitorStopPoint: const Vec3(6.9, 0, 2.1),
-        yaw: -0.09,
-        isBuilt: full,
-        level: full ? 3 : 1,
-      ),
-      PlotState(
-        id: 'motel',
-        businessType: BusinessType.desertMotel,
-        position: const Vec3(-4.8, 0, -7.8),
-        footprintWidth: 6.9,
-        footprintDepth: 4.4,
-        visitorStopPoint: const Vec3(-4.6, 0, -4.9),
-        yaw: 0.08,
-        isBuilt: full,
-        level: full ? 3 : 1,
-      ),
-      PlotState(
-        id: 'lookout',
-        businessType: BusinessType.lookoutCamp,
-        position: const Vec3(4.6, 0, -8.0),
-        footprintWidth: 6.4,
-        footprintDepth: 4.4,
-        visitorStopPoint: const Vec3(4.2, 0, -4.9),
-        yaw: -0.09,
-        isBuilt: full,
-        level: full ? 3 : 1,
-      ),
-    ];
+    roadNetwork.clear();
+    parkingLots.clear();
+    decorations.clear();
+    vehicles.clear();
+    visitors.clear();
+    cancelToolMode(notify: false);
+    plots = _buildPlots(full: full);
+    _highestStage = 1;
 
     if (full) {
-      parkingTier = 3;
+      worldGrid.resetOwnership([
+        for (int px = 2; px <= 5; px++)
+          for (int pz = 4; pz <= 6; pz++) LandParcel(px, pz),
+      ]);
+
+      // Paved Monument Valley loop: twin highway junctions + three town avenues
+      for (int gz = -20; gz <= OutpostLayout.highwayEntryRowZ; gz++) {
+        roadNetwork.setTile(GridCell(-10, gz), RoadTier.paved);
+        roadNetwork.setTile(GridCell(10, gz), RoadTier.paved);
+      }
+      for (int gx = -10; gx <= 10; gx++) {
+        for (final row in const [-6, -13, -20]) {
+          roadNetwork.setTile(GridCell(gx, row), RoadTier.paved);
+        }
+      }
+
+      parkingLots.addAll([
+        ParkingLotEntity(
+          id: 'lot_${_nextEntityId++}',
+          kind: ParkingLotKind.pavedLot,
+          gridX: 3,
+          gridZ: -12,
+        ),
+        ParkingLotEntity(
+          id: 'lot_${_nextEntityId++}',
+          kind: ParkingLotKind.gravelLot,
+          gridX: -4,
+          gridZ: -12,
+        ),
+        ParkingLotEntity(
+          id: 'lot_${_nextEntityId++}',
+          kind: ParkingLotKind.dirtPullOff,
+          gridX: -3,
+          gridZ: -19,
+        ),
+      ]);
+
       cash = 1450.0;
       totalCashEarned = 3650.0;
       totalCustomersServed = 42;
       tapUpgradeLevel = 2;
     } else {
-      parkingTier = 0;
+      worldGrid.resetOwnership([
+        for (final (px, pz) in OutpostLayout.starterParcels) LandParcel(px, pz),
+      ]);
       cash = 0.0;
       totalCashEarned = 0.0;
       totalCustomersServed = 0;
       tapUpgradeLevel = 1;
     }
+    totalTaps = 0;
     selectedPlotId = null;
-    decorations.clear();
   }
 
   void _initMilestones() {
@@ -259,16 +298,39 @@ class GameController extends ChangeNotifier {
       MilestoneData(
         id: 'm_park1',
         title: 'First Pull-Off',
-        description: 'Build the Dirt Pull-Off so travellers can stop',
-        rewardCash: 35,
-        checkCompleted: () => parkingTier >= 1,
+        description: 'Place a Dirt Pull-Off beside your cart',
+        rewardCash: 40,
+        checkCompleted: () => parkingLots.isNotEmpty,
+      ),
+      MilestoneData(
+        id: 'm_road1',
+        title: 'Desert Access Road',
+        description: 'Connect Route 163 to your cart with a road',
+        rewardCash: 60,
+        checkCompleted: () => plots.any((p) => p.isBuilt && p.access.hasDirectRoad),
+      ),
+      MilestoneData(
+        id: 'm_land',
+        title: 'Land Rush',
+        description: 'Buy your first extra desert land parcel',
+        rewardCash: 100,
+        checkCompleted: () =>
+            worldGrid.ownedParcels.length > OutpostLayout.starterParcels.length,
       ),
       MilestoneData(
         id: 'm_3biz',
-        title: 'Roadside Strip',
-        description: 'Operate at least 3 desert businesses',
-        rewardCash: 150,
-        checkCompleted: () => builtCount >= 3,
+        title: 'Desert Strip',
+        description: 'Operate at least 3 road-connected businesses',
+        rewardCash: 160,
+        checkCompleted: () => connectedBuiltCount >= 3,
+      ),
+      MilestoneData(
+        id: 'm_paved_loop',
+        title: 'Highway Loop',
+        description: 'Build 4+ Paved tiles & 2 Route 163 junctions',
+        rewardCash: 420,
+        checkCompleted: () =>
+            roadNetwork.pavedRoadCount >= 4 && roadNetwork.highwayTurnOffCount >= 2,
       ),
       MilestoneData(
         id: 'm_oasis',
@@ -276,13 +338,6 @@ class GameController extends ChangeNotifier {
         description: 'Build all 8 desert city landmarks',
         rewardCash: 1000,
         checkCompleted: () => builtCount == plots.length,
-      ),
-      MilestoneData(
-        id: 'm_500min',
-        title: 'Booming Highway Stop',
-        description: 'Reach \$500/min passive income',
-        rewardCash: 350,
-        checkCompleted: () => incomePerMinute >= 500,
       ),
       MilestoneData(
         id: 'm_taps',
@@ -301,95 +356,184 @@ class GameController extends ChangeNotifier {
     ];
   }
 
-  void _seedInitialTraffic() {
-    vehicles.clear();
-    visitors.clear();
+  /// Recomputes road connectivity, store access, tile occupancy & cached progression.
+  void _recomputeNetwork() {
+    roadNetwork.recompute(
+      plots: plots,
+      parkingLots: parkingLots,
+      decorations: decorations,
+    );
+    worldGrid.rebuildOccupancy(
+      plots: plots,
+      parkingLots: parkingLots,
+      decorations: decorations,
+    );
+    _refreshProgression();
+  }
 
-    _spawnVehicle(initialX: -14.0, direction: 1, forcePark: false);
-    _spawnVehicle(initialX: 9.0, direction: -1, forcePark: false);
-    _spawnVehicle(initialX: -2.0, direction: 1, forcePark: false);
+  void _refreshProgression() {
+    _connectedBuiltCount = plots.where((p) => p.isBuilt && p.access.score > 0.0).length;
+    final activeLots = parkingLots.where((l) => l.isConnected).toList(growable: false);
+    _totalParkingSpaces = activeLots.fold<int>(0, (s, l) => s + l.spec.spaces);
 
-    if (parkingTier >= 2) {
-      for (final slotIdx in [1, 4]) {
-        final slot = OutpostLayout.parkingSlots[slotIdx];
-        final v = VehicleEntity(
-          id: _nextEntityId++,
-          kind: slotIdx == 1 ? VehicleKind.pickupTruck : VehicleKind.camperRv,
-          bodyColor: _randomVehicleColor(),
-          position: Vec3(slot.x, 0, slot.z),
-          yaw: -math.pi * 0.5,
-          speed: 0,
-          direction: 1,
-          phase: VehiclePhase.parked,
-          parkingSlotIndex: slotIdx,
-          parkTimer: 4.5 + slotIdx * 1.4,
-          spawnedVisitor: true,
+    if (activeLots.isEmpty) {
+      _parkingTier = 0;
+    } else if (activeLots.any((l) => l.kind == ParkingLotKind.pavedLot) ||
+        _totalParkingSpaces >= 6) {
+      _parkingTier = 3;
+    } else if (activeLots.any((l) => l.kind == ParkingLotKind.gravelLot) ||
+        _totalParkingSpaces >= 4) {
+      _parkingTier = 2;
+    } else {
+      _parkingTier = 1;
+    }
+
+    final built = plots.where((p) => p.isBuilt).toList(growable: false);
+    _averageAccess = built.isEmpty
+        ? 0.0
+        : built.fold<double>(0.0, (s, p) => s + p.access.score) / built.length;
+
+    // Stage is MONOTONIC: bulldozing never drops progression or re-locks content.
+    final computed = _computeStage();
+    if (computed > _highestStage) {
+      _highestStage = computed;
+      if (!_suppressStageFx) {
+        floatingCash.add(
+          FloatingCash(
+            position: townFocus + const Vec3(0, 4.2, 0),
+            text: 'STAGE $computed · ${stageInfo.title.toUpperCase()}!',
+            color: DesertPalette.gold,
+            duration: 2.2,
+          ),
         );
-        vehicles.add(v);
-        _spawnVisitorsFromVehicle(v);
+        _playTapFeedback(heavy: true);
       }
     }
   }
 
-  // --- Computed metrics ---
+  int _computeStage() {
+    final hasHighway = roadNetwork.highwayTurnOffCount > 0;
+    int stage = 1;
+    if (_totalParkingSpaces >= 2 && hasHighway) stage = 2;
+    if (stage >= 2 &&
+        _connectedBuiltCount >= 2 &&
+        (totalCustomersServed >= 4 || roadNetwork.gravelOrBetterCount >= 3)) {
+      stage = 3;
+    }
+    if (stage >= 3 && _connectedBuiltCount >= 4 && _totalParkingSpaces >= 4) stage = 4;
+    if (stage >= 4 &&
+        _connectedBuiltCount >= 5 &&
+        (roadNetwork.pavedRoadCount >= 4 || _totalParkingSpaces >= 6)) {
+      stage = 5;
+    }
+    if (stage >= 5 && _connectedBuiltCount >= 7 && _totalParkingSpaces >= 6) stage = 6;
+    return stage;
+  }
+
+  // --- Computed Metrics & Progression Gates ---
 
   int get builtCount => plots.where((p) => p.isBuilt).length;
+  int get connectedBuiltCount => _connectedBuiltCount;
+  int get totalParkingSpaces => _totalParkingSpaces;
+  int get parkingTier => _parkingTier;
+  double get averageAccessScore => _averageAccess;
+  int get outpostStage => _highestStage;
 
-  /// Hash signature of built static buildings & their levels for instant `CustomPainter` cache invalidation.
+  OutpostStageInfo get stageInfo =>
+      kOutpostStages[(outpostStage - 1).clamp(0, kOutpostStages.length - 1)];
+
+  PlotState get cartPlot => plots.first;
+
+  /// World-space focus point of the town (the cart, or the starter land center).
+  Vec3 get townFocus {
+    final cart = cartPlot;
+    if (cart.isBuilt) return cart.position;
+    final (px, pz) = OutpostLayout.starterParcels.first;
+    return OutpostLayout.parcelCenter(px, pz);
+  }
+
   int get staticBuildingsSignature {
     int h = 17;
     for (final p in plots) {
       h = h * 31 + (p.isBuilt ? p.level : 0);
+      h = h * 31 + p.gridX * 7 + p.gridZ * 13 + p.rotationQuarter * 3;
       h = h * 31 + (p.bounceTimer > 0 || p.buildPopTimer > 0 ? 1 : 0);
     }
+    for (final l in parkingLots) {
+      h = h * 31 + l.kind.index * 19 + l.gridX * 7 + l.gridZ * 13 + l.rotationQuarter * 3;
+      h = h * 31 + (l.connectedSide?.index ?? 7);
+    }
+    h = h * 31 + roadNetwork.version;
+    h = h * 31 + worldGrid.version;
+    h = h * 31 + _highestStage * 97;
+    h = h * 31 + toolMode.index;
     return h ^ (selectedPlotId?.hashCode ?? 0);
+  }
+
+  bool isRoadTierUnlocked(RoadTier tier) =>
+      outpostStage >= kRoadTierCatalog[tier]!.unlockStage;
+
+  bool isParkingKindUnlocked(ParkingLotKind kind) =>
+      outpostStage >= kParkingLotCatalog[kind]!.unlockStage;
+
+  bool isDecorationUnlocked(DecorationKind kind) =>
+      outpostStage >= decorationUnlockStage(kind);
+
+  int decorationUnlockStage(DecorationKind kind) {
+    return switch (kind) {
+      DecorationKind.saguaroCluster || DecorationKind.woodenSignpost => 1,
+      DecorationKind.picnicSet => 2,
+      DecorationKind.desertLamp || DecorationKind.campfireRing => 4,
+    };
   }
 
   bool isPlotUnlocked(PlotState plot) {
     if (plot.isBuilt) return true;
-    switch (plot.businessType) {
-      case BusinessType.vendorStall:
-        return true;
-      case BusinessType.convenienceStore:
-        return parkingTier >= 1;
-      case BusinessType.foodStand:
-        return parkingTier >= 2 || builtCount >= 2;
-      case BusinessType.desertDiner:
-        return parkingTier >= 2 && builtCount >= 2;
-      case BusinessType.gasStation:
-        return builtCount >= 3;
-      case BusinessType.oasisPlaza:
-        return builtCount >= 4 && parkingTier >= 2;
-      case BusinessType.desertMotel:
-        return builtCount >= 5;
-      case BusinessType.lookoutCamp:
-        return builtCount >= 6;
-    }
+    return outpostStage >= plot.data.stage;
   }
 
-  List<PlotState> get visiblePlots =>
-      plots.where(isPlotUnlocked).toList(growable: false);
-
-  bool get canUpgradeParking => parkingTier < kParkingTiers.length - 1;
-
-  ParkingTierData? get nextParkingTier =>
-      canUpgradeParking ? kParkingTiers[parkingTier + 1] : null;
-
-  ParkingTierData get currentParkingTierData => kParkingTiers[parkingTier];
-
-  /// Systemic scenic tip bonus from placed desert decorations (+4% per prop!).
-  double get decorationBonusMultiplier => 1.0 + decorations.length * 0.04;
-
-  double get incomePerMinute {
-    if (parkingTier == 0) return 0.0;
-    double sum = 0;
-    for (final plot in plots) {
-      if (plot.isBuilt) {
-        sum += kBusinessCatalog[plot.businessType]!.incomeForLevel(plot.level);
+  /// `null` if [plot] may upgrade now, otherwise a short lock label.
+  String? upgradeLockReason(PlotState plot) {
+    if (!plot.isBuilt) return 'UNBUILT';
+    final data = plot.data;
+    if (plot.level >= data.maxLevel) return 'MAX';
+    if (!plot.access.hasParkingAccess || plot.access.score <= 0.0) {
+      return 'NO ROAD';
+    }
+    final nextLv = plot.level + 1;
+    if (nextLv == 3 && outpostStage < 3) return 'STAGE 3';
+    if (nextLv == 4) {
+      if (outpostStage < 4) return 'STAGE 4';
+      if (plot.access.roadTier == null ||
+          plot.access.roadTier!.index < RoadTier.gravel.index) {
+        return 'NEED GRAVEL';
       }
     }
-    final lotMultiplier = 1.0 + (parkingTier - 1) * 0.15;
-    return (sum * lotMultiplier * decorationBonusMultiplier).roundToDouble();
+    if (nextLv == 5) {
+      if (outpostStage < 6) return 'STAGE 6';
+      if (plot.access.roadTier != RoadTier.paved) return 'NEED PAVED';
+    }
+    return null;
+  }
+
+  bool canUpgradePlotByProgression(PlotState plot) => upgradeLockReason(plot) == null;
+
+  List<PlotState> get visiblePlots => plots.where((p) => p.isBuilt).toList(growable: false);
+
+  List<PlotState> get availableUnbuiltPlots =>
+      plots.where((p) => !p.isBuilt).toList(growable: false);
+
+  double get decorationBonusMultiplier => 1.0 + decorations.length * 0.04;
+
+  /// Passive income scales directly with each store's live Road Access quality.
+  double get incomePerMinute {
+    if (_totalParkingSpaces <= 0) return 0.0;
+    double sum = 0.0;
+    for (final plot in plots) {
+      if (!plot.isBuilt || plot.access.score <= 0.0) continue;
+      sum += plot.data.incomeForLevel(plot.level) * plot.access.score;
+    }
+    return (sum * decorationBonusMultiplier).roundToDouble();
   }
 
   double get tapIncome {
@@ -398,12 +542,15 @@ class GameController extends ChangeNotifier {
     return ((base + bonus) * decorationBonusMultiplier).roundToDouble();
   }
 
-  double get tapUpgradeCost => (35.0 * math.pow(1.65, tapUpgradeLevel - 1)).roundToDouble();
+  double get tapUpgradeCost =>
+      (35.0 * math.pow(1.65, tapUpgradeLevel - 1)).roundToDouble();
 
   int get reputation =>
       builtCount * 12 +
       totalCustomersServed +
       decorations.length * 6 +
+      roadNetwork.roadCount * 2 +
+      _totalParkingSpaces * 5 +
       plots.fold<int>(0, (s, p) => s + (p.isBuilt ? p.level * 4 : 0));
 
   MilestoneData? get nextActiveMilestone {
@@ -416,135 +563,22 @@ class GameController extends ChangeNotifier {
     return null;
   }
 
-  PlotState? get selectedPlot {
-    if (selectedPlotId == null) return null;
-    for (final p in plots) {
-      if (p.id == selectedPlotId) return p;
+  int get claimableMilestoneCount =>
+      milestones.where((m) => !m.claimed && m.checkCompleted()).length;
+
+  /// O(1) occupancy probe used to auto-clear flora under roads, lots & buildings.
+  bool isWorldPointOccupied(double x, double z) {
+    for (final ox in const [-0.7, 0.7]) {
+      for (final oz in const [-0.7, 0.7]) {
+        final (gx, gz) = OutpostLayout.worldToCell(Vec3(x + ox, 0, z + oz));
+        final cell = GridCell(gx, gz);
+        if (roadNetwork.hasRoadAt(cell) || worldGrid.isOccupied(cell)) return true;
+      }
     }
-    return null;
+    return false;
   }
 
-  // --- Persistence (Local Save / Load + Real Offline Earnings) ---
-
-  void saveState() {
-    if (!enablePersistence) return;
-    final map = <String, Object?>{
-      'preset': activePreset.name,
-      'cash': cash,
-      'totalCashEarned': totalCashEarned,
-      'totalCustomersServed': totalCustomersServed,
-      'totalTaps': totalTaps,
-      'tapUpgradeLevel': tapUpgradeLevel,
-      'parkingTier': parkingTier,
-      'timeOfDay': timeOfDay,
-      'autoDayNight': autoDayNight,
-      'soundEnabled': soundEnabled,
-      'savedAtMs': DateTime.now().millisecondsSinceEpoch,
-      'plots': [
-        for (final p in plots)
-          {'id': p.id, 'isBuilt': p.isBuilt, 'level': p.level},
-      ],
-      'decorations': [
-        for (final d in decorations)
-          {'kind': d.kind.name, 'name': d.name, 'cost': d.cost},
-      ],
-      'claimedMilestones': [
-        for (final m in milestones)
-          if (m.claimed) m.id,
-      ],
-    };
-    OutpostStorage.writeSave(jsonEncode(map));
-  }
-
-  void _loadSavedState() {
-    final raw = OutpostStorage.readSave();
-    if (raw == null || raw.isEmpty) return;
-    try {
-      final map = jsonDecode(raw) as Map<String, dynamic>;
-      final presetName = map['preset'] as String?;
-      if (presetName == OutpostPreset.fullCity.name) {
-        activePreset = OutpostPreset.fullCity;
-      } else {
-        activePreset = OutpostPreset.stageOneCareer;
-      }
-
-      cash = (map['cash'] as num?)?.toDouble() ?? cash;
-      totalCashEarned = (map['totalCashEarned'] as num?)?.toDouble() ?? totalCashEarned;
-      totalCustomersServed = (map['totalCustomersServed'] as num?)?.toInt() ?? 0;
-      totalTaps = (map['totalTaps'] as num?)?.toInt() ?? 0;
-      tapUpgradeLevel = (map['tapUpgradeLevel'] as num?)?.toInt() ?? 1;
-      parkingTier = ((map['parkingTier'] as num?)?.toInt() ?? 0).clamp(0, kParkingTiers.length - 1);
-      timeOfDay = (map['timeOfDay'] as num?)?.toDouble() ?? 0.37;
-      autoDayNight = (map['autoDayNight'] as bool?) ?? true;
-      soundEnabled = (map['soundEnabled'] as bool?) ?? true;
-
-      final savedPlots = map['plots'] as List<dynamic>?;
-      if (savedPlots != null) {
-        for (final entry in savedPlots) {
-          if (entry is Map<String, dynamic>) {
-            final id = entry['id'] as String?;
-            for (final p in plots) {
-              if (p.id == id) {
-                p.isBuilt = (entry['isBuilt'] as bool?) ?? p.isBuilt;
-                p.level = ((entry['level'] as num?)?.toInt() ?? p.level).clamp(1, 5);
-              }
-            }
-          }
-        }
-      }
-
-      decorations.clear();
-      final savedDecos = map['decorations'] as List<dynamic>?;
-      if (savedDecos != null) {
-        for (final entry in savedDecos) {
-          if (entry is Map<String, dynamic> && decorations.length < _decorationSpots.length) {
-            final kindStr = entry['kind'] as String?;
-            final kind = DecorationKind.values.firstWhere(
-              (k) => k.name == kindStr,
-              orElse: () => DecorationKind.saguaroCluster,
-            );
-            decorations.add(
-              PlacedDecoration(
-                id: 'deco_${_nextEntityId++}',
-                kind: kind,
-                position: _decorationSpots[decorations.length],
-                name: (entry['name'] as String?) ?? 'Prop',
-                cost: (entry['cost'] as num?)?.toDouble() ?? 35.0,
-              ),
-            );
-          }
-        }
-      }
-
-      final claimedIds = (map['claimedMilestones'] as List<dynamic>?)
-              ?.whereType<String>()
-              .toSet() ??
-          const <String>{};
-      for (final m in milestones) {
-        m.claimed = claimedIds.contains(m.id);
-      }
-
-      final savedAtMs = (map['savedAtMs'] as num?)?.toInt();
-      if (savedAtMs != null && incomePerMinute > 0) {
-        final elapsedMin = ((DateTime.now().millisecondsSinceEpoch - savedAtMs) / 60000.0)
-            .floor()
-            .clamp(0, 480); // Cap offline accrual at 8 hours
-        if (elapsedMin >= 2) {
-          final offlineEarned = (incomePerMinute * elapsedMin * 0.65).roundToDouble();
-          if (offlineEarned >= 5) {
-            cash += offlineEarned;
-            totalCashEarned += offlineEarned;
-            pendingOfflineWelcomeCash = offlineEarned;
-            pendingOfflineMinutes = elapsedMin;
-          }
-        }
-      }
-    } catch (_) {
-      // Ignore corrupt save data cleanly.
-    }
-  }
-
-  // --- Simulation step (called from Flutter Ticker) ---
+  // --- Simulation Step ---
 
   void tick(double dt) {
     final clampedDt = dt.clamp(0.0, 0.05);
@@ -555,7 +589,6 @@ class GameController extends ChangeNotifier {
       timeOfDay = (timeOfDay + clampedDt * _dayCycleRate) % 1.0;
     }
 
-    // Smooth baseline passive income (65% steady stream + ~35% live customer checkout bursts!)
     final steadyPerSec = (incomePerMinute * 0.68) / 60.0;
     final earned = steadyPerSec * clampedDt;
     cash += earned;
@@ -574,460 +607,42 @@ class GameController extends ChangeNotifier {
         plot.bounceTimer = math.max(0.0, plot.bounceTimer - clampedDt);
       }
       if (plot.buildPopTimer > 0) {
-        plot.buildPopTimer = math.max(0.0, plot.buildPopTimer - clampedDt * 1.9);
+        plot.buildPopTimer = math.max(0.0, plot.buildPopTimer - clampedDt * 1.45);
       }
     }
-
-    _updateVehicles(clampedDt);
-    _updateVisitors(clampedDt);
-
-    for (final pt in particles) {
-      pt.age += clampedDt;
-      pt.position = pt.position + pt.velocity * clampedDt;
-      pt.velocity = Vec3(
-        pt.velocity.x * 0.96,
-        pt.velocity.y - (pt.isCoin ? 6.8 : 0.45) * clampedDt,
-        pt.velocity.z * 0.96,
-      );
-      if (pt.position.y < 0.05) {
-        pt.position = Vec3(pt.position.x, 0.05, pt.position.z);
-      }
-    }
-    particles.removeWhere((p) => p.isDone);
 
     for (final fc in floatingCash) {
       fc.age += clampedDt;
     }
     floatingCash.removeWhere((f) => f.isDone);
 
-    // Always repaint 3D canvas; only rebuild HUD widgets when visible integers/badges change!
+    for (final p in particles) {
+      p.age += clampedDt;
+      p.position = p.position + p.velocity * clampedDt;
+      p.velocity = Vec3(
+        p.velocity.x * 0.96,
+        p.velocity.y - (p.isCoin ? 9.5 : 2.8) * clampedDt,
+        p.velocity.z * 0.96,
+      );
+      if (p.position.y < 0.05) {
+        p.position = Vec3(p.position.x, 0.05, p.position.z);
+        p.velocity = Vec3(p.velocity.x * 0.6, 0, p.velocity.z * 0.6);
+      }
+    }
+    particles.removeWhere((p) => p.isDone);
+
+    _updateVehicles(clampedDt);
+    _updateVisitors(clampedDt);
+
     _notifyRender();
+
     final cashFloor = cash.floor();
-    final claimableNow = claimableMilestoneCount;
-    if (cashFloor != _lastHudCashFloor || claimableNow != _lastClaimableCount) {
+    final claimables = claimableMilestoneCount;
+    if (cashFloor != _lastHudCashFloor || claimables != _lastClaimableCount) {
       _lastHudCashFloor = cashFloor;
-      _lastClaimableCount = claimableNow;
+      _lastClaimableCount = claimables;
       notifyListeners();
     }
-  }
-
-  void _updateVehicles(double dt) {
-    _trafficSpawnCooldown -= dt;
-    final desiredMax = 5 + math.min(5, builtCount);
-    if (_trafficSpawnCooldown <= 0 && vehicles.length < desiredMax) {
-      final dir = _rng.nextBool() ? 1 : -1;
-      final spawnX = dir == 1 ? -28.0 : 28.0;
-      final laneZ = dir == 1
-          ? OutpostLayout.highwayEastboundZ
-          : OutpostLayout.highwayWestboundZ;
-      final laneClear = !vehicles.any(
-        (other) =>
-            other.phase == VehiclePhase.highwayCruise &&
-            (other.position.z - laneZ).abs() < 0.8 &&
-            (other.position.x - spawnX).abs() < 6.0,
-      );
-      if (laneClear) {
-        _spawnVehicle(initialX: spawnX, direction: dir, forcePark: false);
-        _trafficSpawnCooldown = (2.6 - builtCount * 0.14).clamp(1.2, 2.8) + _rng.nextDouble() * 1.1;
-      }
-    }
-
-    final toRemove = <VehicleEntity>[];
-    const aisleZ = OutpostLayout.parkingAisleZ;
-
-    for (final v in vehicles) {
-      switch (v.phase) {
-        case VehiclePhase.highwayCruise:
-          double activeSpeed = v.speed;
-          for (final other in vehicles) {
-            if (other.id == v.id) continue;
-            if ((other.position.z - v.position.z).abs() > 1.1) continue;
-            final ahead = (other.position.x - v.position.x) * v.direction;
-            if (ahead > 0.2 && ahead < 4.6) {
-              activeSpeed = math.min(
-                activeSpeed,
-                other.phase == VehiclePhase.highwayCruise ? other.speed * 0.75 : 1.0,
-              );
-              if (ahead < 3.1) activeSpeed = 0.0;
-            }
-          }
-
-          v.position = Vec3(
-            v.position.x + v.direction * activeSpeed * dt,
-            0,
-            v.position.z,
-          );
-          final targetYaw = v.direction == 1 ? 0.0 : math.pi;
-          v.yaw = _lerpAngle(v.yaw, targetYaw, (dt * 7.0).clamp(0.0, 1.0));
-
-          if (parkingTier > 0 && v.parkingSlotIndex == -1) {
-            final entryHalfSpan = OutpostLayout.drivewayHalfSpanForTier(parkingTier);
-            final nearWestEntry = v.direction == 1 &&
-                v.position.x > -entryHalfSpan - 1.2 &&
-                v.position.x < -entryHalfSpan + 1.2;
-            final nearEastEntry = v.direction == -1 &&
-                v.position.x < entryHalfSpan + 1.2 &&
-                v.position.x > entryHalfSpan - 1.2;
-            final pullChance = parkingTier == 1 ? 0.16 : 0.10;
-            if ((nearWestEntry || nearEastEntry) && _rng.nextDouble() < pullChance) {
-              final freeSlot = _findFreeParkingSlot();
-              if (freeSlot != -1) {
-                v.parkingSlotIndex = freeSlot;
-                final slot = OutpostLayout.parkingSlots[freeSlot];
-                final entryX = nearWestEntry ? -entryHalfSpan : entryHalfSpan;
-                v.waypoints
-                  ..clear()
-                  ..add(Vec3(entryX, 0, aisleZ))
-                  ..add(Vec3(slot.x, 0, aisleZ))
-                  ..add(slot);
-                v.phase = VehiclePhase.pullingIn;
-              }
-            }
-          }
-
-          if (v.position.x.abs() > 31.0) {
-            toRemove.add(v);
-          }
-
-        case VehiclePhase.pullingIn:
-          // Subtle tire sand dust puffs on unpaved dirt/gravel lots
-          if (parkingTier <= 2 && _rng.nextDouble() < dt * 7.5) {
-            particles.add(
-              Particle3D(
-                position: v.position + const Vec3(0, 0.14, 0),
-                velocity: Vec3((_rng.nextDouble() - 0.5) * 0.6, 0.45, (_rng.nextDouble() - 0.5) * 0.6),
-                color: DesertPalette.sandLight,
-                size: 4.5,
-                duration: 0.55,
-              ),
-            );
-          }
-
-          if (v.waypoints.isEmpty) {
-            v.yaw = _lerpAngle(v.yaw, -math.pi * 0.5, (dt * 9.0).clamp(0.0, 1.0));
-            v.phase = VehiclePhase.parked;
-            v.parkTimer = 6.5 + _rng.nextDouble() * 3.5;
-            v.spawnedVisitor = false;
-            break;
-          }
-          final wp = v.waypoints.first;
-          final toWp = wp - v.position;
-          final dist = toWp.length;
-          if (dist < 0.22) {
-            v.position = wp;
-            v.waypoints.removeAt(0);
-            if (v.waypoints.isEmpty) {
-              v.yaw = -math.pi * 0.5;
-              v.phase = VehiclePhase.parked;
-              v.parkTimer = 6.5 + _rng.nextDouble() * 3.5;
-              v.spawnedVisitor = false;
-            }
-          } else {
-            final step = math.min(dist, 3.8 * dt);
-            final dir = toWp / dist;
-            v.position = v.position + dir * step;
-            final desiredYaw = math.atan2(dir.z, dir.x);
-            v.yaw = _lerpAngle(v.yaw, desiredYaw, (dt * 8.5).clamp(0.0, 1.0));
-          }
-
-        case VehiclePhase.parked:
-          if (!v.spawnedVisitor) {
-            v.spawnedVisitor = true;
-            _spawnVisitorsFromVehicle(v);
-          }
-          v.parkTimer -= dt;
-          final hasActiveVisitor = visitors.any((vis) => vis.vehicleId == v.id);
-          if (v.parkTimer <= 0 && !hasActiveVisitor) {
-            v.waypoints
-              ..clear()
-              ..add(Vec3(v.position.x, 0, aisleZ));
-            v.phase = VehiclePhase.backingOut;
-          }
-
-        case VehiclePhase.backingOut:
-          if (v.waypoints.isEmpty) {
-            _beginPullOutToHighway(v, aisleZ);
-            break;
-          }
-          final backTarget = v.waypoints.first;
-          final toBack = backTarget - v.position;
-          final dist = toBack.length;
-          if (dist < 0.18) {
-            v.position = backTarget;
-            v.waypoints.clear();
-            _beginPullOutToHighway(v, aisleZ);
-          } else {
-            final step = math.min(dist, 2.2 * dt);
-            v.position = v.position + (toBack / dist) * step;
-            final subtleTailSwing = v.direction == 1 ? -math.pi * 0.42 : -math.pi * 0.58;
-            v.yaw = _lerpAngle(v.yaw, subtleTailSwing, (dt * 2.5).clamp(0.0, 1.0));
-          }
-
-        case VehiclePhase.pullingOut:
-          if (v.waypoints.isEmpty) {
-            v.parkingSlotIndex = -1;
-            v.phase = VehiclePhase.highwayCruise;
-            break;
-          }
-          final wp = v.waypoints.first;
-          final toWp = wp - v.position;
-          final dist = toWp.length;
-          if (dist < 0.25) {
-            v.position = wp;
-            v.waypoints.removeAt(0);
-            if (v.waypoints.isEmpty) {
-              v.parkingSlotIndex = -1;
-              v.phase = VehiclePhase.highwayCruise;
-            }
-          } else {
-            final step = math.min(dist, 4.1 * dt);
-            final dir = toWp / dist;
-            v.position = v.position + dir * step;
-            final desiredYaw = math.atan2(dir.z, dir.x);
-            v.yaw = _lerpAngle(v.yaw, desiredYaw, (dt * 8.0).clamp(0.0, 1.0));
-          }
-      }
-    }
-
-    vehicles.removeWhere(toRemove.contains);
-  }
-
-  void _beginPullOutToHighway(VehicleEntity v, double aisleZ) {
-    final exitHalfSpan = OutpostLayout.drivewayHalfSpanForTier(parkingTier) - 0.15;
-    final exitX = v.direction == 1 ? exitHalfSpan : -exitHalfSpan;
-    final exitZ = v.direction == 1
-        ? OutpostLayout.highwayEastboundZ
-        : OutpostLayout.highwayWestboundZ;
-    v.waypoints
-      ..clear()
-      ..add(Vec3(exitX, 0, aisleZ))
-      ..add(Vec3(exitX + v.direction * 1.6, 0, exitZ));
-    v.phase = VehiclePhase.pullingOut;
-  }
-
-  void _updateVisitors(double dt) {
-    final toRemove = <VisitorEntity>[];
-
-    for (final vis in visitors) {
-      vis.walkCycle += dt;
-      switch (vis.phase) {
-        case VisitorPhase.walkingToBusiness:
-          if (vis.outboundPath.isEmpty) {
-            vis.phase = VisitorPhase.shopping;
-            vis.waitTimer = 1.6 + _rng.nextDouble() * 1.4;
-            break;
-          }
-          final wp = vis.outboundPath.first;
-          final diff = wp - vis.position;
-          final dist = diff.length;
-          if (dist < 0.20) {
-            vis.position = wp;
-            vis.outboundPath.removeAt(0);
-            if (vis.outboundPath.isEmpty) {
-              vis.phase = VisitorPhase.shopping;
-              vis.yaw = -math.pi * 0.5;
-              vis.waitTimer = 1.6 + _rng.nextDouble() * 1.4;
-            }
-          } else {
-            final dir = diff / dist;
-            vis.position = vis.position + dir * (2.05 * dt);
-            final desiredYaw = math.atan2(dir.z, dir.x);
-            vis.yaw = _lerpAngle(vis.yaw, desiredYaw, (dt * 10.0).clamp(0.0, 1.0));
-          }
-
-        case VisitorPhase.shopping:
-          vis.waitTimer -= dt;
-          if (vis.waitTimer <= 0) {
-            final plot = plots.firstWhere(
-              (p) => p.id == vis.targetPlotId,
-              orElse: () => plots.first,
-            );
-            final biz = kBusinessCatalog[plot.businessType]!;
-            final sale = math.max(
-              3.0,
-              ((biz.incomeForLevel(plot.level) * decorationBonusMultiplier) / 15.0)
-                  .roundToDouble(),
-            );
-            cash += sale;
-            totalCashEarned += sale;
-            totalCustomersServed += 1;
-            plot.bounceTimer = 0.28;
-            floatingCash.add(
-              FloatingCash(
-                position: plot.position + const Vec3(0, 2.5, 0),
-                text: '+\$${sale.toInt()}',
-                color: DesertPalette.goldPopup,
-                driftX: (_rng.nextDouble() - 0.5) * 0.65,
-              ),
-            );
-            vis.phase = VisitorPhase.returningToCar;
-            notifyListeners();
-          }
-
-        case VisitorPhase.returningToCar:
-          if (vis.returnPath.isEmpty) {
-            toRemove.add(vis);
-            break;
-          }
-          final wp = vis.returnPath.first;
-          final diff = wp - vis.position;
-          final dist = diff.length;
-          if (dist < 0.22) {
-            vis.position = wp;
-            vis.returnPath.removeAt(0);
-            if (vis.returnPath.isEmpty) {
-              toRemove.add(vis);
-            }
-          } else {
-            final dir = diff / dist;
-            vis.position = vis.position + dir * (2.05 * dt);
-            final desiredYaw = math.atan2(dir.z, dir.x);
-            vis.yaw = _lerpAngle(vis.yaw, desiredYaw, (dt * 10.0).clamp(0.0, 1.0));
-          }
-      }
-    }
-
-    visitors.removeWhere(toRemove.contains);
-  }
-
-  double _lerpAngle(double current, double target, double t) {
-    double diff = (target - current) % (math.pi * 2.0);
-    if (diff > math.pi) diff -= math.pi * 2.0;
-    if (diff < -math.pi) diff += math.pi * 2.0;
-    return current + diff * t;
-  }
-
-  int _findFreeParkingSlot() {
-    final allowed = OutpostLayout.activeSlotIndicesForTier(parkingTier);
-    if (allowed.isEmpty) return -1;
-    final used = vehicles
-        .where((v) => v.parkingSlotIndex >= 0)
-        .map((v) => v.parkingSlotIndex)
-        .toSet();
-    final free = <int>[];
-    for (final idx in allowed) {
-      if (!used.contains(idx)) free.add(idx);
-    }
-    if (free.isEmpty) return -1;
-    return free[_rng.nextInt(free.length)];
-  }
-
-  void _spawnVehicle({
-    required double initialX,
-    required int direction,
-    required bool forcePark,
-  }) {
-    final laneZ = direction == 1
-        ? OutpostLayout.highwayEastboundZ
-        : OutpostLayout.highwayWestboundZ;
-    final kinds = VehicleKind.values;
-    final kind = kinds[_rng.nextInt(kinds.length)];
-    final speed = 4.6 + _rng.nextDouble() * 2.4;
-
-    vehicles.add(
-      VehicleEntity(
-        id: _nextEntityId++,
-        kind: kind,
-        bodyColor: _randomVehicleColor(),
-        position: Vec3(initialX, 0, laneZ),
-        yaw: direction == 1 ? 0.0 : math.pi,
-        speed: speed,
-        direction: direction,
-        phase: forcePark ? VehiclePhase.pullingIn : VehiclePhase.highwayCruise,
-      ),
-    );
-  }
-
-  /// Tourist Vans & Camper RVs unload 2–3 passengers who visit different shops!
-  void _spawnVisitorsFromVehicle(VehicleEntity v) {
-    final openPlots = plots.where((p) => p.isBuilt).toList();
-    if (openPlots.isEmpty) return;
-
-    final int passengerCount = switch (v.kind) {
-      VehicleKind.touristVan => 3,
-      VehicleKind.camperRv => 2,
-      VehicleKind.suv => _rng.nextBool() ? 2 : 1,
-      _ => 1,
-    };
-
-    const shirts = [
-      DesertPalette.awningRed,
-      DesertPalette.turquoise,
-      DesertPalette.gold,
-      DesertPalette.terracotta,
-      DesertPalette.cream,
-      Color(0xFF5D7EA8),
-    ];
-    const hats = [
-      DesertPalette.sand,
-      DesertPalette.woodLight,
-      DesertPalette.cream,
-      DesertPalette.sandstone,
-    ];
-
-    for (int i = 0; i < passengerCount; i++) {
-      final targetPlot = openPlots[(i + _rng.nextInt(openPlots.length)) % openPlots.length];
-      final offset = Vec3(0.42 + (i - 0.5) * 0.34, 0, -1.05 - i * 0.22);
-      final start = v.position + offset;
-      final dest = targetPlot.visitorStopPoint + Vec3((i - 0.5) * 0.36, 0, 0);
-      final outbound = _buildSidewalkPath(start, dest);
-      final inbound = [...outbound.reversed.skip(1), start];
-
-      visitors.add(
-        VisitorEntity(
-          id: _nextEntityId++,
-          shirtColor: shirts[_rng.nextInt(shirts.length)],
-          hatColor: hats[_rng.nextInt(hats.length)],
-          position: start,
-          origin: start,
-          destination: dest,
-          targetPlotId: targetPlot.id,
-          vehicleId: v.id,
-          phase: VisitorPhase.walkingToBusiness,
-          yaw: -math.pi * 0.5,
-          walkCycle: i * 0.8,
-          outboundPath: outbound,
-          returnPath: inbound,
-        ),
-      );
-    }
-  }
-
-  List<Vec3> _buildSidewalkPath(Vec3 start, Vec3 dest) {
-    const promenadeZ = OutpostLayout.frontPromenadeZ;
-    const spineX = OutpostLayout.centralSpineX;
-    final path = <Vec3>[Vec3(start.x, 0, promenadeZ)];
-
-    if (dest.z > 5.5) {
-      path.add(Vec3(dest.x, 0, promenadeZ));
-      path.add(dest);
-    } else if (dest.z > 0.0) {
-      const crossZ = OutpostLayout.midCrosswalkZ;
-      path.add(const Vec3(spineX, 0, promenadeZ));
-      path.add(const Vec3(spineX, 0, crossZ));
-      path.add(Vec3(dest.x, 0, crossZ));
-      path.add(dest);
-    } else {
-      const upperZ = OutpostLayout.upperTerraceZ;
-      path.add(const Vec3(spineX, 0, promenadeZ));
-      path.add(const Vec3(spineX, 0, upperZ));
-      path.add(Vec3(dest.x, 0, upperZ));
-      path.add(dest);
-    }
-    return path;
-  }
-
-  Color _randomVehicleColor() {
-    const palette = [
-      Color(0xFFC85B43),
-      Color(0xFF4F9A94),
-      Color(0xFFE0B45A),
-      Color(0xFFDFD5C3),
-      Color(0xFF5A778E),
-      Color(0xFF7B855E),
-      Color(0xFFB56E4B),
-    ];
-    return palette[_rng.nextInt(palette.length)];
   }
 
   // --- Player Interactions ---
@@ -1042,7 +657,6 @@ class GameController extends ChangeNotifier {
     _playTapFeedback();
 
     final spawnOrigin = plot.position + const Vec3(0, 2.35, 0.35);
-    // Alternating golden/warm arc drift prevents text stacking into a green smudge!
     final sideSign = (totalTaps.isEven ? 1.0 : -1.0);
     floatingCash.add(
       FloatingCash(
@@ -1070,7 +684,6 @@ class GameController extends ChangeNotifier {
     _notifyBoth();
   }
 
-  /// Spawns a friendly in-world hint when tapping an unaffordable bubble.
   void notifyShortfall(Vec3 worldPos, double neededAmount) {
     _playTapFeedback();
     floatingCash.add(
@@ -1085,13 +698,37 @@ class GameController extends ChangeNotifier {
     _notifyRender();
   }
 
+  void _floatNotice(Vec3 worldPos, String text, {Color color = const Color(0xFFFFB899)}) {
+    floatingCash.add(
+      FloatingCash(position: worldPos, text: text, color: color, duration: 1.3),
+    );
+    _notifyRender();
+  }
+
   PlotState? handleWorldTap(Offset screenPos, Size viewport) {
     final groundPoint = camera.screenToGround(screenPos, viewport, planeY: 0.0);
-    final midPoint = camera.screenToGround(screenPos, viewport, planeY: 1.4);
 
+    switch (toolMode) {
+      case WorldToolMode.paintRoad:
+        final (gx, gz) = OutpostLayout.worldToCell(groundPoint);
+        roadLineTap(GridCell(gx, gz));
+        return null;
+      case WorldToolMode.placeBuilding:
+      case WorldToolMode.placeParking:
+      case WorldToolMode.placeDecoration:
+        moveGhostToWorld(groundPoint);
+        return null;
+      case WorldToolMode.buyLand:
+        final parcel = parcelAtWorld(groundPoint);
+        if (parcel != null) buyParcel(parcel);
+        return null;
+      case WorldToolMode.play:
+        break;
+    }
+
+    final midPoint = camera.screenToGround(screenPos, viewport, planeY: 1.4);
     PlotState? best;
     double bestDist = double.infinity;
-
     for (final plot in visiblePlots) {
       final hitGround = plot.containsGroundPoint(groundPoint, margin: 0.9);
       final hitMid = plot.containsGroundPoint(midPoint, margin: 0.9);
@@ -1105,108 +742,50 @@ class GameController extends ChangeNotifier {
     }
 
     if (best != null) {
-      if (best.isBuilt) {
-        performActiveTap(target: best);
-      } else {
-        if (!buildOnPlot(best)) {
-          final cost = kBusinessCatalog[best.businessType]!.purchaseCost;
-          notifyShortfall(best.position + const Vec3(0, 2.2, 0), cost - cash);
-        }
-      }
+      performActiveTap(target: best);
       return best;
-    }
-
-    if (selectedPlotId != null) {
-      selectedPlotId = null;
-      _notifyBoth();
     }
     return null;
   }
 
-  void selectPlot(String? plotId) {
-    selectedPlotId = plotId;
-    _notifyBoth();
-  }
-
-  bool upgradeParking() {
-    final next = nextParkingTier;
-    if (next == null || cash < next.cost) return false;
-
-    cash -= next.cost;
-    parkingTier = next.tier;
-    _playTapFeedback(heavy: true);
-    camera.setStageFraming(parkingTier: parkingTier, builtCount: builtCount);
-    _spawnConstructionDust(const Vec3(-2.5, 0, 9.4), count: 8);
-    _spawnConstructionDust(const Vec3(2.5, 0, 9.4), count: 8);
-    floatingCash.add(
-      FloatingCash(
-        position: const Vec3(0, 2.2, 9.2),
-        text: '${next.name.toUpperCase()}!',
-        color: DesertPalette.gold,
-        duration: 1.5,
-      ),
-    );
-
-    if (parkingTier == 1) {
-      final freeSlot = _findFreeParkingSlot();
-      if (freeSlot != -1) {
-        final slot = OutpostLayout.parkingSlots[freeSlot];
-        final v = VehicleEntity(
-          id: _nextEntityId++,
-          kind: VehicleKind.pickupTruck,
-          bodyColor: _randomVehicleColor(),
-          position: const Vec3(-9.5, 0, OutpostLayout.highwayEastboundZ),
-          yaw: 0.0,
-          speed: 5.0,
-          direction: 1,
-          phase: VehiclePhase.pullingIn,
-          parkingSlotIndex: freeSlot,
-          waypoints: [
-            const Vec3(-2.4, 0, OutpostLayout.parkingAisleZ),
-            Vec3(slot.x, 0, OutpostLayout.parkingAisleZ),
-            slot,
-          ],
-        );
-        vehicles.add(v);
-      }
+  /// Long-press drag inside a build tool (draws road lines / drags the placement ghost).
+  void beginToolDrag(Vec3 groundPoint) {
+    if (toolMode == WorldToolMode.paintRoad) {
+      final (gx, gz) = OutpostLayout.worldToCell(groundPoint);
+      roadLineStart = GridCell(gx, gz);
+      roadLineEnd = roadLineStart;
+      _playTapFeedback();
+      _notifyBoth();
+    } else if (toolMode == WorldToolMode.placeBuilding ||
+        toolMode == WorldToolMode.placeParking ||
+        toolMode == WorldToolMode.placeDecoration) {
+      moveGhostToWorld(groundPoint);
     }
-
-    saveState();
-    _notifyBoth();
-    return true;
   }
 
-  bool buildOnPlot(PlotState plot) {
-    if (plot.isBuilt) return false;
-    final data = kBusinessCatalog[plot.businessType]!;
-    if (cash < data.purchaseCost) return false;
-
-    cash -= data.purchaseCost;
-    plot.isBuilt = true;
-    plot.level = 1;
-    plot.buildPopTimer = 1.0;
-    plot.bounceTimer = 0.38;
-    _playTapFeedback(heavy: true);
-    camera.setStageFraming(parkingTier: parkingTier, builtCount: builtCount);
-    _spawnConstructionDust(plot.position, count: 14);
-    floatingCash.add(
-      FloatingCash(
-        position: plot.position + const Vec3(0, 2.8, 0),
-        text: 'BUILT!',
-        color: DesertPalette.gold,
-        duration: 1.4,
-      ),
-    );
-    saveState();
-    _notifyBoth();
-    return true;
+  void updateToolDrag(Vec3 groundPoint) {
+    if (toolMode == WorldToolMode.paintRoad && roadLineStart != null) {
+      final (gx, gz) = OutpostLayout.worldToCell(groundPoint);
+      final cell = GridCell(gx, gz);
+      if (cell != roadLineEnd) {
+        roadLineEnd = cell;
+        _notifyBoth();
+      }
+    } else if (toolMode == WorldToolMode.placeBuilding ||
+        toolMode == WorldToolMode.placeParking ||
+        toolMode == WorldToolMode.placeDecoration) {
+      moveGhostToWorld(groundPoint);
+    }
   }
 
   bool upgradePlot(PlotState plot) {
     if (!plot.isBuilt) return false;
-    final data = kBusinessCatalog[plot.businessType]!;
-    if (plot.level >= data.maxLevel) return false;
-    final cost = data.upgradeCostForLevel(plot.level);
+    final lock = upgradeLockReason(plot);
+    if (lock != null) {
+      _floatNotice(plot.position + const Vec3(0, 2.8, 0), lock);
+      return false;
+    }
+    final cost = plot.data.upgradeCostForLevel(plot.level);
     if (cash < cost) return false;
 
     cash -= cost;
@@ -1233,40 +812,18 @@ class GameController extends ChangeNotifier {
     cash -= cost;
     tapUpgradeLevel += 1;
     _playTapFeedback(heavy: true);
-    performActiveTap(target: plots.first);
-    saveState();
-    return true;
-  }
-
-  bool placeDecoration(DecorationKind kind, String name, double cost) {
-    if (cash < cost || decorations.length >= _decorationSpots.length) return false;
-    cash -= cost;
-    _playTapFeedback(heavy: true);
-    final spot = _decorationSpots[decorations.length];
-    decorations.add(
-      PlacedDecoration(
-        id: 'deco_${_nextEntityId++}',
-        kind: kind,
-        position: spot,
-        name: name,
-        cost: cost,
-      ),
-    );
-    _spawnConstructionDust(spot, count: 8);
     floatingCash.add(
       FloatingCash(
-        position: spot + const Vec3(0, 2.0, 0),
-        text: '+4% TIPS!',
-        color: DesertPalette.goldPopup,
-        duration: 1.3,
+        position: plots.first.position + const Vec3(0, 2.7, 0),
+        text: 'TAP +\$${tapIncome.toInt()}!',
+        color: DesertPalette.gold,
+        duration: 1.25,
       ),
     );
     saveState();
     _notifyBoth();
     return true;
   }
-
-  bool get canAddMoreDecorations => decorations.length < _decorationSpots.length;
 
   bool claimMilestone(MilestoneData milestone) {
     if (milestone.claimed || !milestone.checkCompleted()) return false;
@@ -1276,7 +833,7 @@ class GameController extends ChangeNotifier {
     _playTapFeedback(heavy: true);
     floatingCash.add(
       FloatingCash(
-        position: const Vec3(0, 3.5, 2.0),
+        position: townFocus + const Vec3(0, 3.5, 0),
         text: '+\$${milestone.rewardCash.toInt()} BONUS!',
         color: DesertPalette.gold,
         duration: 1.6,
@@ -1286,9 +843,6 @@ class GameController extends ChangeNotifier {
     _notifyBoth();
     return true;
   }
-
-  int get claimableMilestoneCount =>
-      milestones.where((m) => !m.claimed && m.checkCompleted()).length;
 
   void _spawnConstructionDust(Vec3 center, {int count = 12}) {
     for (int i = 0; i < count; i++) {
@@ -1307,7 +861,7 @@ class GameController extends ChangeNotifier {
     }
   }
 
-  // --- Time of day & preset controls ---
+  // --- Time of Day & Preset Controls ---
 
   void setTimePreset(double normalizedTime, {bool pauseCycle = true}) {
     timeOfDay = normalizedTime % 1.0;
@@ -1323,35 +877,37 @@ class GameController extends ChangeNotifier {
   }
 
   void switchPreset(OutpostPreset preset) {
-    _initPlots(preset);
+    _suppressStageFx = true;
+    _initWorld(preset);
     _initMilestones();
-    camera.reset(parkingTier: parkingTier, builtCount: builtCount);
+    _recomputeNetwork();
+    _resetCameraToTown();
     _seedInitialTraffic();
+    _suppressStageFx = false;
     saveState();
     _notifyBoth();
-  }
-
-  double simulateOfflineEarnings({int minutesAway = 15}) {
-    final earned = (incomePerMinute * minutesAway).roundToDouble();
-    cash += earned;
-    totalCashEarned += earned;
-    floatingCash.add(
-      FloatingCash(
-        position: const Vec3(0, 3.2, 1.0),
-        text: '+\$${earned.toInt()} OFFLINE',
-        color: DesertPalette.goldPopup,
-        duration: 1.6,
-      ),
-    );
-    saveState();
-    _notifyBoth();
-    return earned;
   }
 
   // --- Camera Controls ---
 
+  void _resetCameraToTown() {
+    if (activePreset == OutpostPreset.fullCity) {
+      camera.reset(target: const Vec3(0, 1.8, -12.0), distance: 58.0);
+    } else {
+      camera.reset(
+        target: townFocus + const Vec3(0, 1.6, 0),
+        distance: Camera3D.stageOneDistance,
+      );
+    }
+  }
+
   void panCamera(Offset delta, Size viewport) {
     camera.panByScreenDelta(delta, viewport);
+    _notifyRender();
+  }
+
+  void panCameraRelative(double rightUnits, double forwardUnits) {
+    camera.panRelative(rightUnits, forwardUnits);
     _notifyRender();
   }
 
@@ -1360,13 +916,33 @@ class GameController extends ChangeNotifier {
     _notifyRender();
   }
 
+  void tiltCamera(double deltaRadians) {
+    camera.tiltByDelta(deltaRadians);
+    _notifyRender();
+  }
+
   void zoomCamera(double scaleDelta) {
     camera.zoomByFactor(scaleDelta);
     _notifyRender();
   }
 
+  void rotateCameraQuarter(int direction) {
+    camera.rotateQuarter(direction);
+    _notifyRender();
+  }
+
+  void cycleCameraTilt() {
+    camera.cyclePitchPreset();
+    _notifyRender();
+  }
+
   void resetCamera() {
-    camera.reset(parkingTier: parkingTier, builtCount: builtCount);
+    camera.focusOn(
+      townFocus + const Vec3(0, 1.6, 0),
+      distance: activePreset == OutpostPreset.fullCity ? 58.0 : 34.0,
+      pitch: Camera3D.defaultPitch,
+      yaw: Camera3D.defaultYaw,
+    );
     _notifyRender();
   }
 }

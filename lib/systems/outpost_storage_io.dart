@@ -1,14 +1,21 @@
 import 'dart:io';
 
 File _resolveSaveFile(String key) {
-  final home = Platform.environment['USERPROFILE'] ??
-      Platform.environment['HOME'] ??
-      Directory.systemTemp.path;
-  return File('$home${Platform.pathSeparator}.$key.json');
+  final home = Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'];
+  if (home != null && home.isNotEmpty) {
+    // On iOS/macOS sandboxes, $HOME itself can be read-only while $HOME/Documents is writable.
+    if (Platform.isIOS || Platform.isMacOS) {
+      final docs = Directory('$home/Documents');
+      if (docs.existsSync()) {
+        return File('${docs.path}${Platform.pathSeparator}.$key.json');
+      }
+    }
+    return File('$home${Platform.pathSeparator}.$key.json');
+  }
+  return File('${Directory.systemTemp.path}${Platform.pathSeparator}.$key.json');
 }
 
 String? readStorage(String key) {
-  if (Platform.environment['FLUTTER_TEST'] == 'true') return null;
   try {
     final file = _resolveSaveFile(key);
     if (!file.existsSync()) return null;
@@ -19,11 +26,11 @@ String? readStorage(String key) {
 }
 
 void writeStorage(String key, String value) {
-  if (Platform.environment['FLUTTER_TEST'] == 'true') return;
   try {
     final file = _resolveSaveFile(key);
-    file.writeAsStringSync(value, flush: false);
+    // Async write prevents 6-second autosaves from stalling the UI frame thread.
+    file.writeAsString(value, flush: false).catchError((_) => file);
   } catch (_) {
-    // Ignore read-only filesystem errors gracefully.
+    // Ignore read-only environments cleanly.
   }
 }

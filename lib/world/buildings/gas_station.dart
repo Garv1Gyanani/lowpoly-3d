@@ -22,7 +22,7 @@ class GasStationBuilding {
       mesh.addBoxShadow(0, 0, 5.4, 4.1, 3.3, lighting.shadowDirection, shadowCol);
 
       mesh.addBox(0, 0, 0.2, 5.5, 0.18, 4.4, DesertPalette.concrete);
-      mesh.addBox(0.25, 0.18, -1.12, 4.75, 2.48, 1.82, DesertPalette.cream);
+      mesh.addBox(0.25, 0.18, -1.12, 4.75, 2.48, 1.82, DesertPalette.cream, skipTop: true);
       MeshParts.addAdobeParapetRoof(
         mesh,
         cx: 0.25,
@@ -35,29 +35,30 @@ class GasStationBuilding {
         addVigasBeams: false,
       );
 
-      mesh.addBox(-0.78, 0.18, -0.20, 1.88, 1.75, 0.10, DesertPalette.metal, depthBias: -0.16);
+      // Garage door seated strictly in front of wall (z = -0.21) with flush horizontal slats
+      mesh.addBox(-0.78, 0.18, -0.18, 1.88, 1.75, 0.06, DesertPalette.metal);
       for (final sy in [0.55, 0.92, 1.29, 1.66]) {
-        mesh.addBox(-0.78, sy, -0.14, 1.84, 0.05, 0.04, DesertPalette.metalDark, depthBias: -0.22);
+        mesh.addFlushRectOnZ(-0.78, sy, -0.15, 1.84, 0.05, DesertPalette.metalDark, positiveZ: true);
       }
 
       MeshParts.addFramedFrontWindow(
         mesh,
         cx: 1.42,
         cy: 1.30,
-        zWall: -0.20,
+        zWall: -0.21,
         width: 1.28,
         height: 0.90,
       );
 
       const canopyY = 2.75;
-      mesh.addBox(-1.55, 0.18, 1.05, 0.30, canopyY - 0.18, 0.30, DesertPalette.creamDark);
-      mesh.addBox(1.55, 0.18, 1.05, 0.30, canopyY - 0.18, 0.30, DesertPalette.creamDark);
+      mesh.addBox(-1.55, 0.18, 1.05, 0.30, canopyY - 0.18, 0.30, DesertPalette.creamDark, skipTop: true);
+      mesh.addBox(1.55, 0.18, 1.05, 0.30, canopyY - 0.18, 0.30, DesertPalette.creamDark, skipTop: true);
       mesh.addBox(0, canopyY, 1.05, 4.75, 0.38, 2.12, DesertPalette.cream);
-      mesh.addBox(0, canopyY + 0.08, 1.05, 4.86, 0.22, 2.22, DesertPalette.awningRed);
+      mesh.addBox(0, canopyY + 0.08, 1.05, 4.86, 0.22, 2.22, DesertPalette.awningRed, skipTop: true);
       for (final lx in [-0.95, 0.95]) {
         mesh.addBox(
           lx,
-          canopyY - 0.05,
+          canopyY - 0.06,
           1.05,
           1.15,
           0.06,
@@ -65,7 +66,7 @@ class GasStationBuilding {
           DesertPalette.cream,
           emissiveColor: DesertPalette.windowNight,
           emissiveStrength: 1.0,
-          depthBias: -0.12,
+          skipTop: true,
         );
         mesh.addGlow(Vec3(lx, canopyY - 0.18, 1.05), DesertPalette.windowNight, radius: 34, intensity: 0.85);
       }
@@ -75,21 +76,20 @@ class GasStationBuilding {
         mesh.addFrustum(bx, 0.33, 1.05, 0.09, 0.09, 0.08, 0.08, 0.62, 6, DesertPalette.gold);
       }
       for (final px in [-0.66, 0.66]) {
-        mesh.addBox(px, 0.33, 1.05, 0.52, 1.12, 0.40, DesertPalette.awningRed);
+        mesh.addBox(px, 0.33, 1.05, 0.52, 1.12, 0.40, DesertPalette.awningRed, skipTop: true);
         mesh.addBox(px, 1.45, 1.05, 0.44, 0.14, 0.34, DesertPalette.cream);
         mesh.addBox(px + 0.30, 0.66, 1.05, 0.07, 0.54, 0.07, DesertPalette.asphalt);
         mesh.addBox(px + 0.30, 1.12, 1.05, 0.10, 0.14, 0.12, DesertPalette.metal);
-        mesh.addBox(
+        mesh.addFlushRectOnZ(
           px,
-          0.92,
-          1.26,
+          1.08,
+          1.25,
           0.35,
           0.32,
-          0.06,
           DesertPalette.cream,
+          positiveZ: true,
           emissiveColor: DesertPalette.windowNight,
           emissiveStrength: 0.85,
-          depthBias: -0.20,
         );
       }
 

@@ -195,9 +195,14 @@ class ObjectStudioScreen extends StatefulWidget {
   State<ObjectStudioScreen> createState() => _ObjectStudioScreenState();
 }
 
+class _StudioRepaint extends ChangeNotifier {
+  void ping() => notifyListeners();
+}
+
 class _ObjectStudioScreenState extends State<ObjectStudioScreen>
     with SingleTickerProviderStateMixin {
   late final Ticker _ticker;
+  final _StudioRepaint _repaint = _StudioRepaint();
   Duration _lastTick = Duration.zero;
   double _animTime = 0.0;
 
@@ -225,18 +230,19 @@ class _ObjectStudioScreenState extends State<ObjectStudioScreen>
       }
       final dt = ((elapsed - _lastTick).inMicroseconds / 1000000.0).clamp(0.0, 0.05);
       _lastTick = elapsed;
-      setState(() {
-        _animTime += dt;
-        if (_autoRotate) {
-          _camera.yaw += dt * 0.45;
-        }
-      });
+      _animTime += dt;
+      if (_autoRotate) {
+        _camera.yaw += dt * 0.45;
+      }
+      // Repaints only the 3D canvas (zero 60 Hz widget tree rebuilds!)
+      _repaint.ping();
     })..start();
   }
 
   @override
   void dispose() {
     _ticker.dispose();
+    _repaint.dispose();
     super.dispose();
   }
 
@@ -247,6 +253,7 @@ class _ObjectStudioScreenState extends State<ObjectStudioScreen>
       _camera.target = Vec3(0, _asset.targetY, 0);
       _camera.pitch = 0.30;
     });
+    _repaint.ping();
   }
 
   @override
@@ -261,29 +268,32 @@ class _ObjectStudioScreenState extends State<ObjectStudioScreen>
           Listener(
             onPointerSignal: (event) {
               if (event is PointerScrollEvent) {
-                setState(() {
-                  final factor = event.scrollDelta.dy > 0 ? 1.08 : 0.92;
-                  _camera.distance = (_camera.distance * factor).clamp(4.5, 48.0);
-                });
+                final factor = event.scrollDelta.dy > 0 ? 1.08 : 0.92;
+                _camera.distance = (_camera.distance * factor).clamp(4.5, 48.0);
+                _repaint.ping();
               }
             },
             child: GestureDetector(
-              onPanStart: (_) => setState(() => _autoRotate = false),
-              onPanUpdate: (details) {
-                setState(() {
-                  _camera.yaw -= details.delta.dx * 0.012;
-                  _camera.pitch = (_camera.pitch + details.delta.dy * 0.008).clamp(0.08, 0.85);
-                });
+              onPanStart: (_) {
+                if (_autoRotate) setState(() => _autoRotate = false);
               },
-              child: CustomPaint(
-                painter: _StudioPainter(
-                  asset: _asset,
-                  level: _level,
-                  camera: _camera,
-                  lighting: lighting,
-                  animTime: _animTime,
+              onPanUpdate: (details) {
+                _camera.yaw -= details.delta.dx * 0.012;
+                _camera.pitch = (_camera.pitch + details.delta.dy * 0.008).clamp(0.08, 1.20);
+                _repaint.ping();
+              },
+              child: RepaintBoundary(
+                child: CustomPaint(
+                  painter: _StudioPainter(
+                    repaint: _repaint,
+                    asset: _asset,
+                    level: _level,
+                    camera: _camera,
+                    lighting: lighting,
+                    getAnimTime: () => _animTime,
+                  ),
+                  size: Size.infinite,
                 ),
-                size: Size.infinite,
               ),
             ),
           ),
@@ -496,22 +506,25 @@ class _ObjectStudioScreenState extends State<ObjectStudioScreen>
 
 class _StudioPainter extends CustomPainter {
   const _StudioPainter({
+    required Listenable repaint,
     required this.asset,
     required this.level,
     required this.camera,
     required this.lighting,
-    required this.animTime,
-  });
+    required this.getAnimTime,
+  }) : super(repaint: repaint);
 
   final _StudioAssetEntry asset;
   final int level;
   final Camera3D camera;
   final DesertLighting lighting;
-  final double animTime;
+  final double Function() getAnimTime;
 
   @override
   void paint(Canvas canvas, Size size) {
-    SceneRenderer3D.paintSkyDome(canvas, size, camera, lighting, animTime);
+    final animTime = getAnimTime();
+    final frame = camera.createFrame(size);
+    SceneRenderer3D.paintSkyDome(canvas, size, camera, lighting, animTime, frame: frame);
 
     final mesh = MeshBuilder();
     final shadowCol = lighting.shadowColor;
@@ -659,9 +672,12 @@ class _StudioPainter extends CustomPainter {
         );
     }
 
-    SceneRenderer3D.paintMesh(canvas, size, camera, lighting, mesh);
+    SceneRenderer3D.paintMesh(canvas, size, camera, lighting, mesh, frame: frame);
   }
 
   @override
-  bool shouldRepaint(covariant _StudioPainter oldDelegate) => true;
+  bool shouldRepaint(covariant _StudioPainter oldDelegate) =>
+      oldDelegate.asset != asset ||
+      oldDelegate.level != level ||
+      oldDelegate.lighting.timeOfDay != lighting.timeOfDay;
 }

@@ -23,7 +23,7 @@ class FoodStandBuilding {
       mesh.addBoxShadow(0, 0, 3.5, 2.6, 2.6, lighting.shadowDirection, shadowCol);
 
       mesh.addBox(0, 0, 0.1, 3.75, 0.16, 2.85, DesertPalette.concrete);
-      mesh.addBox(0, 0.16, -0.18, 2.85, 2.20, 1.95, DesertPalette.terracotta);
+      mesh.addBox(0, 0.16, -0.18, 2.85, 2.02, 1.95, DesertPalette.terracotta, skipTop: true);
       mesh.addBox(0, 2.18, -0.18, 3.0, 0.24, 2.10, DesertPalette.cream);
 
       mesh.addFrontWindow(0, 1.38, 0.80, 1.88, 0.84, const Color(0xFF3E2D24), DesertPalette.windowNight);
@@ -58,18 +58,17 @@ class FoodStandBuilding {
       for (int i = 0; i < pennantCols.length; i++) {
         final px = -1.12 + i * 0.45;
         mesh.addTri(
-          Vec3(px - 0.15, 1.74, 1.60),
-          Vec3(px + 0.15, 1.74, 1.60),
+          Vec3(px - 0.15, 1.72, 1.60),
+          Vec3(px + 0.15, 1.72, 1.60),
           Vec3(px, 1.48, 1.60),
           pennantCols[i],
           doubleSided: true,
-          depthBias: -0.22,
         );
       }
       for (final lx in [-0.85, 0.0, 0.85]) {
         mesh.addBox(
           lx,
-          1.76,
+          1.72,
           1.42,
           0.10,
           0.10,
@@ -77,7 +76,6 @@ class FoodStandBuilding {
           DesertPalette.cream,
           emissiveColor: DesertPalette.windowNight,
           emissiveStrength: 1.0,
-          depthBias: -0.22,
         );
       }
 
@@ -156,10 +154,10 @@ class FoodStandBuilding {
         );
         mesh.addBox(
           0,
-          2.36,
+          2.42,
           -0.18,
           3.06,
-          0.07,
+          0.06,
           2.16,
           DesertPalette.gold,
           emissiveColor: DesertPalette.neonWarm,

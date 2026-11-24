@@ -35,8 +35,8 @@ class VendorCartBuilding {
       mesh.addGroundRect(0, 0.028, 0.15, 2.25, 1.55, DesertPalette.terracotta, layer: RenderLayer.groundDecal, depthBias: -0.06);
       mesh.addGroundRect(0, 0.030, 0.15, 1.80, 1.15, DesertPalette.creamDark, layer: RenderLayer.groundDecal, depthBias: -0.08);
 
-      // Two sturdy iron-rimmed spoked cart wheels + hubs
-      for (final wx in [-0.76, 0.76]) {
+      // Two sturdy iron-rimmed spoked cart wheels + hubs (flush outside cart body at x = ±0.71)
+      for (final wx in [-0.77, 0.77]) {
         mesh.addBox(wx, 0.0, 0.05, 0.12, 0.58, 0.58, DesertPalette.woodDark);
         final isRight = wx > 0;
         mesh.addFlushRectOnX(
@@ -58,21 +58,21 @@ class VendorCartBuilding {
           positiveX: isRight,
         );
       }
-      // Front wooden kickstand pegs
-      mesh.addBox(-0.56, 0.0, 0.44, 0.09, 0.36, 0.09, DesertPalette.woodDark);
-      mesh.addBox(0.56, 0.0, 0.44, 0.09, 0.36, 0.09, DesertPalette.woodDark);
+      // Front wooden kickstand pegs (stopping cleanly at cart body bottom y = 0.34)
+      mesh.addBox(-0.56, 0.0, 0.44, 0.09, 0.34, 0.09, DesertPalette.woodDark, skipTop: true);
+      mesh.addBox(0.56, 0.0, 0.44, 0.09, 0.34, 0.09, DesertPalette.woodDark, skipTop: true);
 
-      // Compact timber push-cart body, corner trim & cream serving top
-      mesh.addBox(0, 0.34, 0.08, 1.42, 0.66, 0.90, DesertPalette.wood);
+      // Compact timber push-cart body (y = 0.34..0.98, skipTop) & cream serving top (y = 0.98..1.07)
+      mesh.addBox(0, 0.34, 0.08, 1.42, 0.64, 0.90, DesertPalette.wood, skipTop: true);
       mesh.addBox(0, 0.98, 0.08, 1.56, 0.09, 1.00, DesertPalette.cream);
 
-      // Wooden hand-pull push handles sticking out on the right side (+X)
-      mesh.addBox(0.98, 0.82, -0.18, 0.58, 0.08, 0.08, DesertPalette.woodLight);
-      mesh.addBox(0.98, 0.82, 0.34, 0.58, 0.08, 0.08, DesertPalette.woodLight);
-      mesh.addBox(1.25, 0.82, 0.08, 0.08, 0.08, 0.58, DesertPalette.woodDark);
+      // Wooden hand-pull push handles sticking out on the right side (+X, starting cleanly at x = 0.71)
+      mesh.addBox(0.99, 0.82, -0.18, 0.54, 0.08, 0.08, DesertPalette.woodLight);
+      mesh.addBox(0.99, 0.82, 0.34, 0.54, 0.08, 0.08, DesertPalette.woodLight);
+      mesh.addBox(1.26, 0.82, 0.08, 0.08, 0.08, 0.58, DesertPalette.woodDark);
 
       // Turquoise ice chest cooler + glass lemonade dispenser jug + stacked cups + cash tin!
-      mesh.addBox(-0.36, 1.07, 0.04, 0.56, 0.42, 0.48, DesertPalette.turquoise);
+      mesh.addBox(-0.36, 1.07, 0.04, 0.56, 0.42, 0.48, DesertPalette.turquoise, skipTop: true);
       mesh.addBox(-0.36, 1.49, 0.04, 0.60, 0.07, 0.52, DesertPalette.cream);
       // Golden lemonade jug with brass lid
       mesh.addFrustum(0.18, 1.07, 0.14, 0.16, 0.16, 0.14, 0.14, 0.34, 6, DesertPalette.gold, topColor: DesertPalette.cream);
@@ -82,8 +82,8 @@ class VendorCartBuilding {
       mesh.addBox(0.58, 1.07, 0.24, 0.10, 0.24, 0.10, DesertPalette.water);
       mesh.addBox(0.46, 1.07, -0.14, 0.28, 0.16, 0.22, DesertPalette.metalDark);
 
-      // Hand-painted wooden sign flush on the front of the cart
-      mesh.addFlushRectOnZ(0, 0.67, 0.54, 1.14, 0.44, DesertPalette.woodDark, positiveZ: true);
+      // Hand-painted wooden sign flush in front of cart front wall (z = 0.53)
+      mesh.addFlushRectOnZ(0, 0.67, 0.535, 1.14, 0.44, DesertPalette.woodDark, positiveZ: true);
       mesh.addFlushRectOnZ(0, 0.67, 0.555, 1.04, 0.36, DesertPalette.cream, positiveZ: true);
       mesh.addFrontSignText(
         0,
@@ -101,8 +101,8 @@ class VendorCartBuilding {
       mesh.addBox(-1.14, 0.0, 0.06, 0.46, 0.42, 0.44, DesertPalette.woodLight);
       mesh.addFrustum(-1.14, 0.42, 0.06, 0.14, 0.14, 0.10, 0.10, 0.28, 6, DesertPalette.water);
 
-      // Striped hexagonal desert shade umbrella (alternating terracotta & cream wedges!)
-      mesh.addBox(-0.48, 0.98, -0.26, 0.08, 1.54, 0.08, DesertPalette.woodDark);
+      // Striped hexagonal desert shade umbrella (pole starts on countertop y = 1.07 and stops under canopy y = 2.22)
+      mesh.addBox(-0.48, 1.07, -0.26, 0.08, 1.15, 0.08, DesertPalette.woodDark, skipTop: true);
       const ux = -0.48;
       const uz = -0.26;
       const uBaseY = 2.22;
@@ -124,7 +124,7 @@ class VendorCartBuilding {
       }
       mesh.addBox(ux, uTopY, uz, 0.12, 0.10, 0.12, DesertPalette.woodDark);
 
-      // Hanging glowing brass camp lantern under the umbrella
+      // Hanging glowing brass camp lantern cleanly beneath the umbrella canopy
       mesh.addBox(-0.08, 2.16, -0.14, 0.04, 0.22, 0.04, DesertPalette.metalDark);
       mesh.addBox(
         -0.08,

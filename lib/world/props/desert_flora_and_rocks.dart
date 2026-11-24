@@ -65,17 +65,76 @@ class DesertFloraAndRocks {
     buildDynamic(mesh, lighting, shadowCol, animTime);
   }
 
+  /// Deterministic scatter of cacti, boulders & sagebrush across the whole open desert
+  /// (kind: 0 = saguaro, 1 = sandstone rock, 2 = static bush).
+  static final List<(double, double, int, double, double)> _scatter = _generateScatter();
+
+  static List<(double, double, int, double, double)> _generateScatter() {
+    int seed = 1640531527;
+    double next() {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    }
+
+    final out = <(double, double, int, double, double)>[];
+    int guard = 0;
+    while (out.length < 150 && guard++ < 1000) {
+      final x = -112.0 + next() * 224.0;
+      final z = -150.0 + next() * 192.0;
+      if (z > 6.5 && z < 20.5) continue; // keep Route 163 corridor clear
+      final roll = next();
+      final kind = roll < 0.34 ? 0 : (roll < 0.62 ? 1 : 2);
+      final scale = 0.75 + next() * 0.65;
+      final rot = next() * math.pi * 2.0;
+      out.add((x, z, kind, scale, rot));
+    }
+    return out;
+  }
+
   static void buildStatic(
     MeshBuilder mesh,
     DesertLighting lighting,
-    Color shadowCol,
-  ) {
+    Color shadowCol, {
+    bool Function(double x, double z)? isOccupied,
+  }) {
+    for (int i = 0; i < _scatter.length; i++) {
+      final (x, z, kind, scale, rot) = _scatter[i];
+      if (isOccupied != null && isOccupied(x, z)) continue;
+      final gy = DesertTerrain.heightAt(x, z);
+      switch (kind) {
+        case 0:
+          addSaguaro(mesh, Vec3(x, gy, z), scale, rot, lighting, shadowCol);
+        case 1:
+          addSandstoneRock(
+            mesh,
+            Vec3(x, gy - 0.08, z),
+            0.7 + scale * 0.6,
+            0.45 + scale * 0.35,
+            rot,
+            lighting: lighting,
+            shadowCol: shadowCol,
+            groundY: gy,
+          );
+        default:
+          addDesertBush(
+            mesh,
+            Vec3(x, gy, z),
+            0.38 + scale * 0.22,
+            fixedPhase: rot,
+            lighting: lighting,
+            shadowCol: shadowCol,
+          );
+      }
+    }
+
     for (final (x, z, scale, rot) in _cacti) {
+      if (isOccupied != null && isOccupied(x, z)) continue;
       addSaguaro(mesh, Vec3(x, DesertTerrain.heightAt(x, z), z), scale, rot, lighting, shadowCol);
     }
 
     for (int i = 0; i < _rocks.length; i++) {
       final (x, z, rx, h) = _rocks[i];
+      if (isOccupied != null && isOccupied(x, z)) continue;
       final gy = DesertTerrain.heightAt(x, z);
       addSandstoneRock(
         mesh,
@@ -100,6 +159,7 @@ class DesertFloraAndRocks {
     ];
     for (int i = 0; i < pebbles.length; i++) {
       final (px, pz, r) = pebbles[i];
+      if (isOccupied != null && isOccupied(px, pz)) continue;
       final gy = DesertTerrain.heightAt(px, pz);
       mesh.addFrustum(
         px,
@@ -133,6 +193,7 @@ class DesertFloraAndRocks {
     // Static contact shadows under bushes so swaying foliage stays grounded
     for (int i = 0; i < _bushes.length; i++) {
       final (x, z, radius) = _bushes[i];
+      if (isOccupied != null && isOccupied(x, z)) continue;
       final gy = DesertTerrain.heightAt(x, z);
       mesh.addDiscShadow(
         x,
@@ -152,10 +213,12 @@ class DesertFloraAndRocks {
     MeshBuilder mesh,
     DesertLighting lighting,
     Color shadowCol,
-    double animTime,
-  ) {
+    double animTime, {
+    bool Function(double x, double z)? isOccupied,
+  }) {
     for (int i = 0; i < _bushes.length; i++) {
       final (x, z, radius) = _bushes[i];
+      if (isOccupied != null && isOccupied(x, z)) continue;
       final sway = math.sin(animTime * 1.4 + i * 1.3) * 0.025;
       addDesertBush(
         mesh,

@@ -27,6 +27,12 @@ enum GameIconKind {
   volumeOff,
   cactus,
   sparkle,
+  road,
+  rotate,
+  move,
+  trash,
+  check,
+  warning,
 }
 
 class GameIcon extends StatelessWidget {
@@ -291,6 +297,59 @@ class _GameIconPainter extends CustomPainter {
           ..lineTo(w * 0.40, h * 0.40)
           ..close();
         canvas.drawPath(star, fill);
+
+      case GameIconKind.road:
+        canvas.drawLine(Offset(w * 0.28, h * 0.16), Offset(w * 0.14, h * 0.84), stroke);
+        canvas.drawLine(Offset(w * 0.72, h * 0.16), Offset(w * 0.86, h * 0.84), stroke);
+        canvas.drawLine(Offset(w * 0.50, h * 0.22), Offset(w * 0.50, h * 0.40), stroke);
+        canvas.drawLine(Offset(w * 0.50, h * 0.56), Offset(w * 0.50, h * 0.78), stroke);
+
+      case GameIconKind.rotate:
+        canvas.drawArc(
+          Rect.fromCircle(center: c, radius: w * 0.32),
+          -math.pi * 0.7,
+          math.pi * 1.45,
+          false,
+          stroke,
+        );
+        final head = Path()
+          ..moveTo(w * 0.68, h * 0.16)
+          ..lineTo(w * 0.84, h * 0.34)
+          ..lineTo(w * 0.60, h * 0.38)
+          ..close();
+        canvas.drawPath(head, fill);
+
+      case GameIconKind.move:
+        canvas.drawLine(Offset(w * 0.50, h * 0.16), Offset(w * 0.50, h * 0.84), stroke);
+        canvas.drawLine(Offset(w * 0.16, h * 0.50), Offset(w * 0.84, h * 0.50), stroke);
+        canvas.drawCircle(c, w * 0.10, fill);
+
+      case GameIconKind.trash:
+        canvas.drawLine(Offset(w * 0.20, h * 0.28), Offset(w * 0.80, h * 0.28), stroke);
+        canvas.drawLine(Offset(w * 0.38, h * 0.18), Offset(w * 0.62, h * 0.18), stroke);
+        final bin = Path()
+          ..moveTo(w * 0.28, h * 0.28)
+          ..lineTo(w * 0.34, h * 0.82)
+          ..lineTo(w * 0.66, h * 0.82)
+          ..lineTo(w * 0.72, h * 0.28);
+        canvas.drawPath(bin, stroke);
+
+      case GameIconKind.check:
+        final p = Path()
+          ..moveTo(w * 0.20, h * 0.52)
+          ..lineTo(w * 0.42, h * 0.74)
+          ..lineTo(w * 0.82, h * 0.28);
+        canvas.drawPath(p, stroke);
+
+      case GameIconKind.warning:
+        final tri = Path()
+          ..moveTo(w * 0.50, h * 0.16)
+          ..lineTo(w * 0.86, h * 0.82)
+          ..lineTo(w * 0.14, h * 0.82)
+          ..close();
+        canvas.drawPath(tri, stroke);
+        canvas.drawLine(Offset(w * 0.50, h * 0.42), Offset(w * 0.50, h * 0.58), stroke);
+        canvas.drawCircle(Offset(w * 0.50, h * 0.71), w * 0.05, fill);
     }
   }
 

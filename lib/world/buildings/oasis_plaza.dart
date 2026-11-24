@@ -114,10 +114,10 @@ class OasisPlazaBuilding {
       final poolCol = Color.lerp(DesertPalette.water, DesertPalette.neonTurquoise, 0.18 + shimmer)!;
       mesh.addBox(
         0.32,
-        0.13,
+        0.16,
         0.32,
         2.15,
-        0.09,
+        0.06,
         1.50,
         poolCol,
         emissiveColor: DesertPalette.neonTurquoise,
@@ -131,7 +131,7 @@ class OasisPlazaBuilding {
         mesh.addBox(lx, 0.34, -0.84, 0.46, 0.05, 0.30, DesertPalette.terracotta);
       }
 
-      mesh.addBox(-1.32, 0.16, -0.26, 1.16, 1.72, 1.92, DesertPalette.terracotta);
+      mesh.addBox(-1.32, 0.16, -0.26, 1.16, 1.72, 1.92, DesertPalette.terracotta, skipTop: true);
       mesh.addBox(-1.32, 1.88, -0.26, 1.34, 0.18, 2.10, DesertPalette.cream);
       MeshParts.addFramedFrontWindow(
         mesh,
@@ -143,15 +143,15 @@ class OasisPlazaBuilding {
       );
 
       for (final x in [-0.42, 1.32]) {
-        mesh.addBox(x, 0.16, -1.10, 0.15, 2.10, 0.15, DesertPalette.wood);
+        mesh.addBox(x, 0.16, -1.10, 0.15, 2.04, 0.15, DesertPalette.wood, skipTop: true);
       }
       for (final rx in [-0.20, 0.22, 0.64, 1.06]) {
-        mesh.addBox(rx, 2.24, -0.96, 0.10, 0.08, 0.64, DesertPalette.woodDark);
+        mesh.addBox(rx, 2.20, -0.96, 0.10, 0.08, 0.64, DesertPalette.woodDark);
       }
-      mesh.addBox(0.45, 2.20, -1.10, 2.05, 0.56, 0.22, DesertPalette.woodLight);
+      mesh.addBox(0.45, 2.28, -1.10, 2.05, 0.56, 0.22, DesertPalette.woodLight);
       mesh.addFrontSignText(
         0.45,
-        2.48,
+        2.56,
         -0.98,
         1.90,
         0.44,
@@ -160,7 +160,7 @@ class OasisPlazaBuilding {
         glowColor: DesertPalette.neonTurquoise,
       );
 
-      mesh.addBox(1.70, 0.16, 1.18, 0.12, 1.15, 0.12, DesertPalette.woodDark);
+      mesh.addBox(1.70, 0.16, 1.18, 0.12, 1.12, 0.12, DesertPalette.woodDark, skipTop: true);
       mesh.addBox(
         1.70,
         1.28,

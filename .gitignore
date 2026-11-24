@@ -41,3 +41,6 @@ app.*.map.json
 
 # FVM Version Cache
 .fvm/
+
+# Godot 4+ cache
+.godot/

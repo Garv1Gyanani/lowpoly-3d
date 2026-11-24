@@ -28,7 +28,7 @@ class LookoutCampBuilding {
       const tz = -0.80;
       for (final lx in [-0.68, 0.68]) {
         for (final lz in [-0.68, 0.68]) {
-          mesh.addBox(tx + lx, 0, tz + lz, 0.17, 3.85, 0.17, DesertPalette.woodDark);
+          mesh.addBox(tx + lx, 0, tz + lz, 0.17, 3.80, 0.17, DesertPalette.woodDark, skipTop: true);
         }
       }
       mesh.addBox(tx, 1.25, tz + 0.68, 1.48, 0.10, 0.10, DesertPalette.wood);
@@ -85,7 +85,7 @@ class LookoutCampBuilding {
       );
       mesh.addGlow(const Vec3(tx, 6.15, tz), DesertPalette.neonWarm, radius: 32, intensity: 0.78);
 
-      mesh.addBox(-1.50, 0, -0.70, 2.70, 2.02, 2.18, DesertPalette.cream);
+      mesh.addBox(-1.50, 0, -0.70, 2.70, 2.02, 2.18, DesertPalette.cream, skipTop: true);
       MeshParts.addAdobeParapetRoof(
         mesh,
         cx: -1.50,
@@ -232,7 +232,7 @@ class LookoutCampBuilding {
   static void _addCampTent(MeshBuilder mesh, Vec3 pos, Color wall, Color trim) {
     mesh.withTransform(pos, 0.15, () {
       mesh.addGableRoof(0, 0, 0, 1.18, 0.96, 1.36, wall, trim);
-      mesh.addBox(0, 0, 0.68, 0.42, 0.58, 0.06, DesertPalette.woodDark, depthBias: -0.14);
+      mesh.addFlushRectOnZ(0, 0.29, 0.68, 0.42, 0.58, DesertPalette.woodDark, positiveZ: true);
     });
   }
 }

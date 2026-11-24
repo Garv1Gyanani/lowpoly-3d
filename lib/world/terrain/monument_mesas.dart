@@ -10,13 +10,16 @@ class MonumentMesas {
   const MonumentMesas._();
 
   static void buildAll(MeshBuilder mesh, {DesertLighting? lighting}) {
+    // Monument Valley skyline pushed far beyond the 128 x 128 buildable desert so the
+    // outpost truly sits in the middle of open sand, framed by distant red-rock giants.
+
     // 1. Hero Left West Mitten Butte (with twin flanking spires!)
     buildMittenButte(
       mesh,
-      cx: -16.5,
-      cz: -46.0,
-      scale: 1.24,
-      distanceFade: 0.14,
+      cx: -62.0,
+      cz: -205.0,
+      scale: 2.7,
+      distanceFade: 0.22,
       hasLeftButtress: true,
       hasRightThumb: true,
       seed: 1,
@@ -26,34 +29,34 @@ class MonumentMesas {
     // 2. Far-Left Distant Mesa Shoulder
     buildFlatPlateau(
       mesh,
-      cx: -44.0,
-      cz: -60.0,
-      rx: 15.0,
-      rz: 9.0,
-      height: 15.0,
-      distanceFade: 0.30,
+      cx: -165.0,
+      cz: -235.0,
+      rx: 38.0,
+      rz: 22.0,
+      height: 34.0,
+      distanceFade: 0.38,
       seed: 2,
     );
 
     // 3. Distant Center Flat-Topped Plateau
     buildFlatPlateau(
       mesh,
-      cx: 1.5,
-      cz: -72.0,
-      rx: 15.0,
-      rz: 8.5,
-      height: 13.5,
-      distanceFade: 0.38,
+      cx: 10.0,
+      cz: -275.0,
+      rx: 40.0,
+      rz: 20.0,
+      height: 30.0,
+      distanceFade: 0.44,
       seed: 3,
     );
 
     // 4. Mid-Right East Mitten Butte (with slender left thumb spire)
     buildMittenButte(
       mesh,
-      cx: 14.5,
-      cz: -58.0,
-      scale: 0.88,
-      distanceFade: 0.28,
+      cx: 60.0,
+      cz: -228.0,
+      scale: 2.0,
+      distanceFade: 0.32,
       hasLeftThumb: true,
       seed: 4,
       lighting: lighting,
@@ -62,19 +65,21 @@ class MonumentMesas {
     // 5. Hero Right Merrick Cathedral Butte
     buildMittenButte(
       mesh,
-      cx: 26.5,
-      cz: -44.0,
-      scale: 1.12,
-      distanceFade: 0.15,
+      cx: 118.0,
+      cz: -192.0,
+      scale: 2.45,
+      distanceFade: 0.24,
       seed: 5,
       lighting: lighting,
     );
 
-    // 6. Mid-ground flanking low red-rock outcrops with grounded contact shadows!
-    buildLowOutcrop(mesh, -21.0, -18.5, 4.2, 3.0, 2.8, 0.06, 6, lighting);
-    buildLowOutcrop(mesh, 20.5, -17.0, 4.4, 3.1, 3.1, 0.06, 7, lighting);
-    buildLowOutcrop(mesh, -25.0, -2.5, 3.6, 2.8, 2.4, 0.04, 8, lighting);
-    buildLowOutcrop(mesh, 24.0, -2.0, 3.8, 2.9, 2.6, 0.04, 9, lighting);
+    // 6. Low red-rock outcrops just outside the buildable desert edges
+    buildLowOutcrop(mesh, -96.0, -70.0, 9.0, 6.5, 6.0, 0.10, 6, lighting);
+    buildLowOutcrop(mesh, 94.0, -52.0, 9.5, 6.8, 6.6, 0.10, 7, lighting);
+    buildLowOutcrop(mesh, -100.0, -5.0, 7.6, 5.8, 5.0, 0.08, 8, lighting);
+    buildLowOutcrop(mesh, 98.0, 2.0, 8.0, 6.0, 5.4, 0.08, 9, lighting);
+    buildLowOutcrop(mesh, -30.0, -150.0, 8.4, 6.0, 5.6, 0.14, 10, lighting);
+    buildLowOutcrop(mesh, 36.0, -146.0, 7.8, 5.6, 5.2, 0.14, 11, lighting);
   }
 
   /// Sculpted multi-tiered 3D red sandstone Mitten / Cathedral Butte.

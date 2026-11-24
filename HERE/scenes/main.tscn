@@ -1,0 +1,28 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/systems/game_state.gd" id="2_state"]
+[ext_resource type="Script" path="res://scripts/systems/desert_camera.gd" id="3_cam"]
+[ext_resource type="Script" path="res://scripts/world/world_renderer.gd" id="4_world"]
+[ext_resource type="Script" path="res://scripts/ui/desert_hud.gd" id="5_hud"]
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1_main")
+
+[node name="GameState" type="Node" parent="."]
+script = ExtResource("2_state")
+
+[node name="DesertCamera" type="Camera3D" parent="."]
+script = ExtResource("3_cam")
+current = true
+
+[node name="WorldRenderer" type="Node3D" parent="."]
+script = ExtResource("4_world")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="WorldRenderer"]
+
+[node name="SunLight" type="DirectionalLight3D" parent="WorldRenderer"]
+shadow_enabled = true
+
+[node name="DesertHud" type="CanvasLayer" parent="."]
+script = ExtResource("5_hud")

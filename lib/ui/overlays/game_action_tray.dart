@@ -9,8 +9,8 @@ import '../game_icons.dart';
 
 enum ActiveGameTray { none, build, upgrade }
 
-/// Slim horizontal wooden game card deck featuring live miniature 3D isometric previews
-/// of each landmark & prop so the player sees exactly what they are constructing!
+/// Slim horizontal wooden game card deck featuring live miniature 3D isometric previews,
+/// road painting entry, freeform parking & store placement, and progression-gated upgrades!
 class GameActionTray extends StatelessWidget {
   const GameActionTray({
     super.key,
@@ -24,11 +24,11 @@ class GameActionTray extends StatelessWidget {
   final VoidCallback onClose;
 
   static const _decoCatalog = [
-    (DecorationKind.saguaroCluster, 'Cactus', 35.0),
-    (DecorationKind.picnicSet, 'Picnic', 55.0),
-    (DecorationKind.woodenSignpost, 'Signpost', 45.0),
-    (DecorationKind.desertLamp, 'Lantern', 75.0),
-    (DecorationKind.campfireRing, 'Campfire', 95.0),
+    (DecorationKind.saguaroCluster, 'Cactus', 35.0, '+4% Tips'),
+    (DecorationKind.woodenSignpost, 'Signpost', 45.0, '+8% Traffic'),
+    (DecorationKind.picnicSet, 'Picnic', 55.0, '+4% Tips'),
+    (DecorationKind.desertLamp, 'Lantern', 75.0, '+4% Tips'),
+    (DecorationKind.campfireRing, 'Campfire', 95.0, '+4% Tips'),
   ];
 
   @override
@@ -58,11 +58,13 @@ class GameActionTray extends StatelessWidget {
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  mode == ActiveGameTray.build ? 'BUILD' : 'UPGRADE',
+                  mode == ActiveGameTray.build
+                      ? 'BUILD · STAGE ${controller.outpostStage}'
+                      : 'UPGRADE & MOVE',
                   style: DesertTypography.display(
-                    size: 12,
+                    size: 11.5,
                     color: GameHudColors.ink,
-                    letterSpacing: 0.9,
+                    letterSpacing: 0.8,
                   ),
                 ),
                 const Spacer(),
@@ -85,7 +87,7 @@ class GameActionTray extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             SizedBox(
-              height: 118,
+              height: 126,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: cards.length,
@@ -102,8 +104,69 @@ class GameActionTray extends StatelessWidget {
   List<Widget> _buildDeckCards() {
     final items = <Widget>[];
 
-    final nextPark = controller.nextParkingTier;
-    if (nextPark != null) {
+    // 1. Roads Paint Mode Card
+    items.add(
+      _GameDeckCard(
+        preview: Container(
+          width: 44,
+          height: 32,
+          decoration: BoxDecoration(
+            color: GameHudColors.woodFrame.withValues(alpha: 0.18),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Center(
+            child: GameIcon(GameIconKind.road, size: 22, color: GameHudColors.woodFrame),
+          ),
+        ),
+        title: 'Build Roads',
+        subtitle: '${controller.roadNetwork.roadCount} tiles laid',
+        costText: 'DRAW',
+        canAfford: true,
+        onTap: () {
+          onClose();
+          controller.enterRoadPaintMode();
+        },
+      ),
+    );
+
+    // 1b. Buy Land parcels (progression-capped)
+    items.add(
+      _GameDeckCard(
+        preview: Container(
+          width: 44,
+          height: 32,
+          decoration: BoxDecoration(
+            color: GameHudColors.goldTop.withValues(alpha: 0.22),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Center(
+            child: GameIcon(GameIconKind.centerFocus, size: 22, color: GameHudColors.woodFrame),
+          ),
+        ),
+        title: 'Buy Land',
+        subtitle:
+            '${controller.ownedParcelCount}/${controller.stageInfo.maxParcels} parcels',
+        costText: controller.canBuyMoreLand
+            ? formatCash(controller.nextParcelPrice)
+            : 'STAGE ${controller.outpostStage + 1}',
+        canAfford: controller.canBuyMoreLand,
+        onTap: () {
+          onClose();
+          controller.enterLandMode();
+        },
+      ),
+    );
+
+    // 2. Freely Placeable Parking Lots (unlocked first, then progression-locked)
+    final parkingKinds = [...ParkingLotKind.values]..sort((a, b) {
+        final ua = controller.isParkingKindUnlocked(a) ? 0 : 1;
+        final ub = controller.isParkingKindUnlocked(b) ? 0 : 1;
+        return ua != ub ? ua.compareTo(ub) : a.index.compareTo(b.index);
+      });
+    for (final kind in parkingKinds) {
+      final spec = kParkingLotCatalog[kind]!;
+      final unlocked = controller.isParkingKindUnlocked(kind);
+      if (!unlocked) continue;
       items.add(
         _GameDeckCard(
           preview: Container(
@@ -114,42 +177,101 @@ class GameActionTray extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
             ),
             child: const Center(
-              child: GameIcon(GameIconKind.parking, size: 22, color: GameHudColors.greenBase),
+              child: GameIcon(
+                GameIconKind.parking,
+                size: 22,
+                color: GameHudColors.greenBase,
+              ),
             ),
           ),
-          title: nextPark.name,
-          subtitle: '${nextPark.spaces} spaces',
-          costText: formatCash(nextPark.cost),
-          canAfford: controller.cash >= nextPark.cost,
-          onTap: controller.upgradeParking,
+          title: spec.name,
+          subtitle: '${spec.spaces} bays · Place',
+          costText: formatCash(spec.cost),
+          canAfford: controller.cash >= spec.cost,
+          onTap: () {
+            onClose();
+            controller.startPlacingParking(kind);
+          },
         ),
       );
     }
 
-    for (final plot in controller.visiblePlots.where((p) => !p.isBuilt)) {
-      final data = kBusinessCatalog[plot.businessType]!;
+    // 3. Unbuilt Stores sorted by unlock status & Stage — unlocked stores appear first!
+    final unbuiltSorted = [...controller.availableUnbuiltPlots]..sort((a, b) {
+        final ua = controller.isPlotUnlocked(a) ? 0 : 1;
+        final ub = controller.isPlotUnlocked(b) ? 0 : 1;
+        return ua != ub ? ua.compareTo(ub) : a.data.stage.compareTo(b.data.stage);
+      });
+    for (final plot in unbuiltSorted) {
+      final data = plot.data;
+      final unlocked = controller.isPlotUnlocked(plot);
       items.add(
         _GameDeckCard(
           preview: Mini3DAssetPreview(businessType: plot.businessType, level: 2),
           title: _shortTitle(data.name),
-          subtitle: '+${formatCash(data.baseIncomePerMin)}/m',
-          costText: formatCash(data.purchaseCost),
-          canAfford: controller.cash >= data.purchaseCost,
-          onTap: () => controller.buildOnPlot(plot),
+          subtitle: unlocked
+              ? '+${formatCash(data.baseIncomePerMin)}/m'
+              : 'Stage ${data.stage} unlock',
+          costText: unlocked ? formatCash(data.purchaseCost) : 'STAGE ${data.stage}',
+          canAfford: unlocked && controller.cash >= data.purchaseCost,
+          onTap: unlocked
+              ? () {
+                  onClose();
+                  controller.startPlacingBuilding(plot.businessType);
+                }
+              : null,
         ),
       );
     }
 
+    // Locked future parking lots shown right after stores as clear progression goals
+    for (final kind in parkingKinds) {
+      if (controller.isParkingKindUnlocked(kind)) continue;
+      final spec = kParkingLotCatalog[kind]!;
+      items.add(
+        _GameDeckCard(
+          preview: Container(
+            width: 44,
+            height: 32,
+            decoration: BoxDecoration(
+              color: GameHudColors.stoneTop.withValues(alpha: 0.22),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Center(
+              child: GameIcon(
+                GameIconKind.parking,
+                size: 22,
+                color: GameHudColors.inkMuted,
+              ),
+            ),
+          ),
+          title: spec.name,
+          subtitle: '${spec.spaces} bays · Stage ${spec.unlockStage}',
+          costText: 'STAGE ${spec.unlockStage}',
+          canAfford: false,
+          onTap: null,
+        ),
+      );
+    }
+
+    // 4. Decorations (progression-gated)
     if (controller.canAddMoreDecorations) {
-      for (final (kind, name, cost) in _decoCatalog) {
+      for (final (kind, name, cost, bonusText) in _decoCatalog) {
+        final unlocked = controller.isDecorationUnlocked(kind);
+        final reqStage = controller.decorationUnlockStage(kind);
         items.add(
           _GameDeckCard(
             preview: Mini3DAssetPreview(decorationKind: kind),
             title: name,
-            subtitle: '+4% Tips',
-            costText: formatCash(cost),
-            canAfford: controller.cash >= cost,
-            onTap: () => controller.placeDecoration(kind, name, cost),
+            subtitle: bonusText,
+            costText: unlocked ? formatCash(cost) : 'STAGE $reqStage',
+            canAfford: unlocked && controller.cash >= cost,
+            onTap: unlocked
+                ? () {
+                    onClose();
+                    controller.startPlacingDecoration(kind, name, cost);
+                  }
+                : null,
           ),
         );
       }
@@ -184,20 +306,173 @@ class GameActionTray extends StatelessWidget {
       ),
     );
 
-    for (final plot in controller.plots.where((p) => p.isBuilt)) {
-      final data = kBusinessCatalog[plot.businessType]!;
-      final isMax = plot.level >= data.maxLevel;
-      final cost = data.upgradeCostForLevel(plot.level);
-      final previewLv = isMax ? plot.level : (plot.level + 1);
+    // Placed Parking Lots: Upgrade in-place (Dirt -> Gravel -> Paved), Move, or Remove!
+    for (int i = 0; i < controller.parkingLots.length; i++) {
+      final lot = controller.parkingLots[i];
+      final nextKind = lot.nextUpgradeKind;
+      final isMax = nextKind == null;
+      final lockReason = controller.parkingLotUpgradeLockReason(lot);
+      final cost = controller.parkingLotUpgradeCost(lot);
+      final nextSpaces = nextKind != null ? kParkingLotCatalog[nextKind]!.spaces : lot.spec.spaces;
+
+      final String btnLabel;
+      final bool canPress;
+      if (isMax) {
+        btnLabel = 'MAX';
+        canPress = false;
+      } else if (lockReason != null) {
+        btnLabel = lockReason;
+        canPress = false;
+      } else {
+        btnLabel = formatCash(cost);
+        canPress = controller.cash >= cost;
+      }
+
+      final String sub = !lot.isConnected
+          ? 'NO ROAD · ${lot.spec.spaces}b'
+          : (isMax
+              ? '${lot.spec.spaces} bays · MAX'
+              : '${lot.spec.spaces} → $nextSpaces bays');
+
       items.add(
         _GameDeckCard(
-          preview: Mini3DAssetPreview(businessType: plot.businessType, level: previewLv),
-          title: _shortTitle(data.name),
-          subtitle: isMax ? 'MAX LV' : 'Lv ${plot.level} → ${plot.level + 1}',
-          costText: isMax ? 'MAX' : formatCash(cost),
-          canAfford: !isMax && controller.cash >= cost,
+          preview: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                width: 44,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: lot.isConnected
+                      ? GameHudColors.greenTop.withValues(alpha: 0.20)
+                      : GameHudColors.terraTop.withValues(alpha: 0.20),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Center(
+                  child: GameIcon(
+                    GameIconKind.parking,
+                    size: 22,
+                    color: lot.isConnected ? GameHudColors.greenBase : GameHudColors.terraBase,
+                  ),
+                ),
+              ),
+              Positioned(
+                left: -28,
+                top: -2,
+                child: GestureDetector(
+                  onTap: () => controller.removeParkingLot(lot),
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: GameHudColors.terraBase,
+                      borderRadius: BorderRadius.circular(7),
+                      border: Border.all(color: GameHudColors.woodFrame, width: 1.2),
+                    ),
+                    child: const GameIcon(
+                      GameIconKind.trash,
+                      size: 11,
+                      color: Color(0xFFFFFFFF),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                right: -28,
+                top: -2,
+                child: GestureDetector(
+                  onTap: () {
+                    onClose();
+                    controller.startRelocatingParkingLot(lot);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: GameHudColors.woodBody,
+                      borderRadius: BorderRadius.circular(7),
+                      border: Border.all(color: GameHudColors.woodFrame, width: 1.2),
+                    ),
+                    child: const GameIcon(
+                      GameIconKind.move,
+                      size: 11,
+                      color: Color(0xFFFFF2D4),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          title: lot.spec.name,
+          subtitle: sub,
+          subtitleColor: !lot.isConnected ? GameHudColors.terraBase : GameHudColors.greenBase,
+          costText: btnLabel,
+          canAfford: canPress,
           isUpgrade: true,
-          onTap: isMax ? null : () => controller.upgradePlot(plot),
+          onTap: canPress ? () => controller.upgradeParkingLot(lot) : null,
+        ),
+      );
+    }
+
+    for (final plot in controller.plots.where((p) => p.isBuilt)) {
+      final data = plot.data;
+      final isMax = plot.level >= data.maxLevel;
+      final lockReason = controller.upgradeLockReason(plot);
+      final cost = data.upgradeCostForLevel(plot.level);
+      final previewLv = isMax ? plot.level : (plot.level + 1);
+      final accessPct = plot.access.percent;
+
+      final String btnLabel;
+      final bool canPress;
+      if (isMax) {
+        btnLabel = 'MAX';
+        canPress = false;
+      } else if (lockReason != null) {
+        btnLabel = lockReason;
+        canPress = false;
+      } else {
+        btnLabel = formatCash(cost);
+        canPress = controller.cash >= cost;
+      }
+
+      items.add(
+        _GameDeckCard(
+          preview: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Mini3DAssetPreview(businessType: plot.businessType, level: previewLv),
+              Positioned(
+                right: -28,
+                top: -2,
+                child: GestureDetector(
+                  onTap: () {
+                    onClose();
+                    controller.startRelocatingPlot(plot);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: GameHudColors.woodBody,
+                      borderRadius: BorderRadius.circular(7),
+                      border: Border.all(color: GameHudColors.woodFrame, width: 1.2),
+                    ),
+                    child: const GameIcon(
+                      GameIconKind.move,
+                      size: 11,
+                      color: Color(0xFFFFF2D4),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          title: _shortTitle(data.name),
+          subtitle: 'Lv${plot.level} · Road $accessPct%',
+          subtitleColor: accessPct == 0
+              ? GameHudColors.terraBase
+              : (accessPct >= 88 ? GameHudColors.greenBase : GameHudColors.inkMuted),
+          costText: btnLabel,
+          canAfford: canPress,
+          isUpgrade: true,
+          onTap: canPress ? () => controller.upgradePlot(plot) : null,
         ),
       );
     }
@@ -220,6 +495,7 @@ class _GameDeckCard extends StatelessWidget {
     required this.canAfford,
     required this.onTap,
     this.isUpgrade = false,
+    this.subtitleColor,
   });
 
   final Widget preview;
@@ -229,11 +505,12 @@ class _GameDeckCard extends StatelessWidget {
   final bool canAfford;
   final VoidCallback? onTap;
   final bool isUpgrade;
+  final Color? subtitleColor;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 118,
+      width: 122,
       padding: const EdgeInsets.fromLTRB(7, 6, 7, 6),
       decoration: BoxDecoration(
         color: GameHudColors.parchmentDark,
@@ -265,7 +542,7 @@ class _GameDeckCard extends StatelessWidget {
             style: DesertTypography.ui(
               size: 10.0,
               weight: FontWeight.w600,
-              color: GameHudColors.inkMuted,
+              color: subtitleColor ?? GameHudColors.inkMuted,
               height: 1.05,
             ),
             maxLines: 1,
@@ -285,9 +562,11 @@ class _GameDeckCard extends StatelessWidget {
                 child: Text(
                   costText,
                   style: DesertTypography.display(
-                    size: 10.8,
+                    size: 10.0,
                     color: const Color(0xFFFFFFFF),
                   ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ),

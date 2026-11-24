@@ -11,6 +11,7 @@ class MeshParts {
   const MeshParts._();
 
   /// Adds a framed front door (+Z) with wooden surround, recessed door panel, and optional transom glass.
+  /// All layers stack cleanly forward from [zWall] with zero wall penetration.
   static void addFramedDoor(
     MeshBuilder mesh, {
     required double cx,
@@ -22,43 +23,41 @@ class MeshParts {
     Color doorColor = DesertPalette.wood,
     bool hasGlassWindow = true,
   }) {
-    // Outer chunky timber frame
+    // Outer chunky timber frame: [zWall, zWall + 0.06]
     mesh.addBox(
       cx,
       yBottom,
       zWall + 0.03,
       width + 0.14,
       height + 0.08,
-      0.10,
+      0.06,
       frameColor,
-      depthBias: -0.14,
     );
-    // Inner door slab
+    // Inner door slab: [zWall + 0.06, zWall + 0.09]
     mesh.addBox(
       cx,
       yBottom,
-      zWall + 0.05,
+      zWall + 0.075,
       width,
       height,
-      0.08,
+      0.03,
       doorColor,
-      depthBias: -0.18,
     );
     if (hasGlassWindow) {
       mesh.addFrontWindow(
         cx,
         yBottom + height * 0.62,
-        zWall + 0.08,
+        zWall + 0.075,
         width * 0.68,
         height * 0.44,
         DesertPalette.windowDay,
         DesertPalette.windowNight,
-        depthBias: -0.26,
       );
     }
   }
 
   /// Adds a framed front window (+Z) with wooden/stucco sill and glowing night glass.
+  /// All layers stack strictly forward from [zWall] with zero box-in-box intersections.
   static void addFramedFrontWindow(
     MeshBuilder mesh, {
     required double cx,
@@ -69,44 +68,42 @@ class MeshParts {
     Color frameColor = DesertPalette.wood,
     Color sillColor = DesertPalette.creamDark,
   }) {
-    // Frame backing
+    final frameBottom = cy - height * 0.5 - 0.05;
+    // Frame backing: [zWall, zWall + 0.05]
     mesh.addBox(
       cx,
-      cy - height * 0.5 - 0.05,
-      zWall + 0.02,
+      frameBottom,
+      zWall + 0.025,
       width + 0.14,
       height + 0.12,
-      0.08,
+      0.05,
       frameColor,
-      depthBias: -0.14,
     );
-    // Window sill ledge
+    // Window sill ledge seated directly below frame: [zWall, zWall + 0.14]
     mesh.addBox(
       cx,
-      cy - height * 0.5 - 0.09,
+      frameBottom - 0.08,
       zWall + 0.07,
       width + 0.24,
       0.08,
-      0.16,
+      0.14,
       sillColor,
-      depthBias: -0.20,
     );
-    // Glowing pane
+    // Glowing pane at zWall + 0.07 (0.02 in front of frame backing)
     mesh.addFrontWindow(
       cx,
       cy,
-      zWall + 0.05,
+      zWall + 0.04,
       width,
       height,
       DesertPalette.windowDay,
       DesertPalette.windowNight,
-      depthBias: -0.26,
     );
-    // Crisp wooden cross-mullion bars for richer handcrafted low-poly window detail
+    // Crisp wooden cross-mullion bars at zWall + 0.085 (in front of pane)
     mesh.addFlushRectOnZ(
       cx,
       cy,
-      zWall + 0.085,
+      zWall + 0.07,
       0.05,
       height,
       frameColor,
@@ -115,7 +112,7 @@ class MeshParts {
     mesh.addFlushRectOnZ(
       cx,
       cy,
-      zWall + 0.085,
+      zWall + 0.07,
       width,
       0.05,
       frameColor,
@@ -123,7 +120,8 @@ class MeshParts {
     );
   }
 
-  /// Adds a southwestern adobe parapet roof with recessed flat roof & protruding wooden vigas beams.
+  /// Adds a southwestern adobe parapet roof built from 4 non-overlapping perimeter parapet walls
+  /// around a cleanly recessed flat roof deck, plus outward-projecting wooden vigas beams.
   static void addAdobeParapetRoof(
     MeshBuilder mesh, {
     required double cx,
@@ -136,29 +134,73 @@ class MeshParts {
     Color roofDeckColor = DesertPalette.sandDark,
     bool addVigasBeams = true,
   }) {
-    mesh.addBox(cx, yBase, cz, width + 0.22, parapetHeight, depth + 0.22, parapetColor);
-    mesh.addBox(cx, yBase + parapetHeight * 0.55, cz, width - 0.18, 0.14, depth - 0.18, roofDeckColor);
+    final outerW = width + 0.22;
+    final outerD = depth + 0.22;
+    final rim = math.min(0.24, math.min(outerW, outerD) * 0.18);
+    final innerW = math.max(0.2, outerW - rim * 2.0);
+    final innerD = math.max(0.2, outerD - rim * 2.0);
+
+    // 1. Recessed flat roof deck cleanly seated inside the parapet well (zero overlap!)
+    mesh.addBox(cx, yBase, cz, innerW, 0.06, innerD, roofDeckColor);
+
+    // 2. Four non-overlapping perimeter parapet rim walls (North, South, West, East)
+    mesh.addBox(
+      cx,
+      yBase,
+      cz - outerD * 0.5 + rim * 0.5,
+      outerW,
+      parapetHeight,
+      rim,
+      parapetColor,
+    );
+    mesh.addBox(
+      cx,
+      yBase,
+      cz + outerD * 0.5 - rim * 0.5,
+      outerW,
+      parapetHeight,
+      rim,
+      parapetColor,
+    );
+    mesh.addBox(
+      cx - outerW * 0.5 + rim * 0.5,
+      yBase,
+      cz,
+      rim,
+      parapetHeight,
+      innerD,
+      parapetColor,
+    );
+    mesh.addBox(
+      cx + outerW * 0.5 - rim * 0.5,
+      yBase,
+      cz,
+      rim,
+      parapetHeight,
+      innerD,
+      parapetColor,
+    );
 
     if (addVigasBeams) {
       final count = math.max(3, (width / 1.15).floor());
       for (int i = 0; i < count; i++) {
         final t = count == 1 ? 0.5 : i / (count - 1);
         final bx = cx - (width * 0.40) + t * (width * 0.80);
+        // Protrudes cleanly outward from front wall (+Z) without penetrating inside
         mesh.addBox(
           bx,
           yBase - 0.12,
           cz + depth * 0.5 + 0.12,
           0.11,
           0.11,
-          0.26,
+          0.22,
           DesertPalette.woodDark,
-          depthBias: -0.15,
         );
       }
     }
   }
 
-  /// Adds a rooftop illuminated marquee signboard with perspective-aligned 3D text.
+  /// Adds a rooftop illuminated marquee signboard with flush front face and perspective-aligned 3D text.
   static void addMarqueeSign(
     MeshBuilder mesh, {
     required double cx,
@@ -174,23 +216,23 @@ class MeshParts {
     double depth = 0.22,
     double glowRadius = 36.0,
   }) {
+    final frontZ = cz + depth * 0.5;
     mesh.addBox(cx, yBottom, cz, width, height, depth, frameColor);
-    mesh.addBox(
+    mesh.addFlushRectOnZ(
       cx,
-      yBottom + 0.08,
-      cz + depth * 0.42,
+      yBottom + height * 0.5,
+      frontZ,
       width - 0.22,
       height - 0.18,
-      0.08,
       faceColor,
+      positiveZ: true,
       emissiveColor: glowColor,
       emissiveStrength: 0.85,
-      depthBias: -0.22,
     );
     mesh.addFrontSignText(
       cx,
       yBottom + height * 0.50,
-      cz + depth * 0.42 + 0.05,
+      frontZ + 0.025,
       width - 0.34,
       height - 0.26,
       text,
@@ -198,7 +240,7 @@ class MeshParts {
       glowColor: glowColor,
     );
     mesh.addGlow(
-      Vec3(cx, yBottom + height * 0.5, cz + depth * 0.5 + 0.1),
+      Vec3(cx, yBottom + height * 0.5, frontZ + 0.1),
       glowColor,
       radius: glowRadius,
       intensity: 0.72,
@@ -217,14 +259,14 @@ class MeshParts {
   }) {
     final s = scale;
     // Wooden table pedestal & tabletop
-    mesh.addBox(cx, yBottom, cz, 0.22 * s, 0.48 * s, 0.22 * s, DesertPalette.woodDark);
+    mesh.addBox(cx, yBottom, cz, 0.22 * s, 0.48 * s, 0.22 * s, DesertPalette.woodDark, skipTop: true);
     mesh.addBox(cx, yBottom + 0.48 * s, cz, 0.80 * s, 0.09 * s, 0.80 * s, DesertPalette.woodLight);
     // Two cute wooden patio stools flanking the table
     for (final dx in [-0.54 * s, 0.54 * s]) {
       mesh.addBox(cx + dx, yBottom, cz, 0.24 * s, 0.34 * s, 0.24 * s, DesertPalette.wood);
     }
-    // Pole & faceted umbrella canopy with peak finial
-    mesh.addBox(cx, yBottom + 0.52 * s, cz, 0.08 * s, 1.25 * s, 0.08 * s, DesertPalette.woodDark);
+    // Pole seated cleanly on top of tabletop and stopping under umbrella canopy
+    mesh.addBox(cx, yBottom + 0.57 * s, cz, 0.08 * s, 0.97 * s, 0.08 * s, DesertPalette.woodDark);
     mesh.addFrustum(
       cx,
       yBottom + 1.54 * s,
@@ -238,7 +280,7 @@ class MeshParts {
       umbrellaColor,
       topColor: topColor,
     );
-    mesh.addBox(cx, yBottom + 1.84 * s, cz, 0.11 * s, 0.12 * s, 0.11 * s, DesertPalette.cream);
+    mesh.addBox(cx, yBottom + 1.86 * s, cz, 0.11 * s, 0.12 * s, 0.11 * s, DesertPalette.cream);
   }
 
   /// Adds a small terracotta pot with a mini cactus or desert agave (great near doorways!).
@@ -249,6 +291,6 @@ class MeshParts {
     required double cz,
   }) {
     mesh.addFrustum(cx, yBottom, cz, 0.18, 0.18, 0.24, 0.24, 0.30, 6, DesertPalette.terracotta);
-    mesh.addFrustum(cx, yBottom + 0.28, cz, 0.12, 0.12, 0.10, 0.10, 0.52, 6, DesertPalette.cactus);
+    mesh.addFrustum(cx, yBottom + 0.30, cz, 0.12, 0.12, 0.10, 0.10, 0.50, 6, DesertPalette.cactus);
   }
 }

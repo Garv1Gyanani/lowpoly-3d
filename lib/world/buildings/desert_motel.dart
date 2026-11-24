@@ -23,7 +23,7 @@ class DesertMotelBuilding {
       mesh.addBox(0, 0, 0.18, 6.8, 0.20, 4.2, DesertPalette.concrete);
       final stories = level >= 2 ? 2 : 1;
       final wallH = stories == 2 ? 4.05 : 2.20;
-      mesh.addBox(0.2, 0.20, -0.68, 5.8, wallH, 2.2, DesertPalette.cream);
+      mesh.addBox(0.2, 0.20, -0.68, 5.8, wallH, 2.2, DesertPalette.cream, skipTop: true);
 
       MeshParts.addAdobeParapetRoof(
         mesh,
@@ -50,14 +50,13 @@ class DesertMotelBuilding {
         mesh.addBox(
           rx - 0.01,
           1.34,
-          0.46,
+          0.47,
           0.11,
           0.16,
-          0.10,
+          0.08,
           DesertPalette.cream,
           emissiveColor: DesertPalette.windowNight,
           emissiveStrength: 1.0,
-          depthBias: -0.22,
         );
         MeshParts.addFramedFrontWindow(
           mesh,
@@ -67,14 +66,16 @@ class DesertMotelBuilding {
           width: 0.70,
           height: 0.68,
         );
-        mesh.addBox(rx + 0.38, 0.38, 0.48, 0.44, 0.24, 0.22, DesertPalette.metal);
+        mesh.addBox(rx + 0.38, 0.38, 0.53, 0.44, 0.24, 0.20, DesertPalette.metal);
       }
 
       if (stories == 2) {
         mesh.addBox(0.2, 2.16, 0.78, 5.85, 0.15, 0.76, DesertPalette.wood);
         mesh.addBox(0.2, 2.82, 1.12, 5.85, 0.10, 0.10, DesertPalette.woodLight);
+        // Split lower & upper balcony posts cleanly at balcony deck (y = 2.16..2.31)
         for (final px in [-2.60, -0.90, 0.82, 2.60]) {
-          mesh.addBox(px, 0.20, 1.12, 0.13, 2.66, 0.13, DesertPalette.woodDark);
+          mesh.addBox(px, 0.20, 1.12, 0.13, 1.96, 0.13, DesertPalette.woodDark, skipTop: true);
+          mesh.addBox(px, 2.31, 1.12, 0.13, 0.51, 0.13, DesertPalette.woodDark, skipTop: true);
         }
 
         const steps = 6;
@@ -82,7 +83,7 @@ class DesertMotelBuilding {
           final frac = (s + 1) / steps;
           final sy = 0.20 + frac * 1.94;
           final sz = 2.02 - frac * 1.18;
-          mesh.addBox(3.42, 0.20, sz, 0.64, sy - 0.20, 0.24, DesertPalette.wood);
+          mesh.addBox(3.42, 0.20, sz, 0.64, sy - 0.28, 0.24, DesertPalette.wood, skipTop: true);
           mesh.addBox(3.42, sy - 0.08, sz + 0.02, 0.68, 0.08, 0.26, DesertPalette.woodLight);
         }
         mesh.addBox(3.72, 0.20, 0.96, 0.12, 2.72, 0.12, DesertPalette.woodDark);
@@ -110,14 +111,13 @@ class DesertMotelBuilding {
           mesh.addBox(
             rx - 0.01,
             3.42,
-            0.46,
+            0.47,
             0.11,
             0.16,
-            0.10,
+            0.08,
             DesertPalette.cream,
             emissiveColor: DesertPalette.windowNight,
             emissiveStrength: 1.0,
-            depthBias: -0.22,
           );
           MeshParts.addFramedFrontWindow(
             mesh,
