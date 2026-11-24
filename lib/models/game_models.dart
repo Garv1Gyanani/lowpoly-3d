@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'dart:ui';
 
 import '../engine/vec3.dart';
 
@@ -14,7 +14,7 @@ enum BusinessType {
   oasisPlaza,
 }
 
-/// Data-driven business definition (GDD Section 16).
+/// Data-driven business definition.
 class BusinessData {
   const BusinessData({
     required this.type,
@@ -26,7 +26,6 @@ class BusinessData {
     required this.upgradeCostBase,
     required this.upgradeMultiplier,
     required this.maxLevel,
-    required this.icon,
     required this.accentColor,
     required this.upgradeNotes,
   });
@@ -40,7 +39,6 @@ class BusinessData {
   final double upgradeCostBase;
   final double upgradeMultiplier;
   final int maxLevel;
-  final IconData icon;
   final Color accentColor;
   final List<String> upgradeNotes;
 
@@ -63,7 +61,7 @@ class BusinessData {
   }
 }
 
-/// A fixed construction plot in the portrait desert outpost diorama.
+/// A construction plot in the desert outpost diorama with optional organic inward yaw.
 class PlotState {
   PlotState({
     required this.id,
@@ -72,6 +70,7 @@ class PlotState {
     required this.footprintWidth,
     required this.footprintDepth,
     required this.visitorStopPoint,
+    this.yaw = 0.0,
     this.isBuilt = false,
     this.level = 1,
     this.bounceTimer = 0.0,
@@ -84,14 +83,11 @@ class PlotState {
   final double footprintWidth;
   final double footprintDepth;
   final Vec3 visitorStopPoint;
+  final double yaw;
 
   bool isBuilt;
   int level;
-
-  /// Short squash-and-stretch animation when tapped or upgraded.
   double bounceTimer;
-
-  /// Pop-in rise animation when newly constructed.
   double buildPopTimer;
 
   bool containsGroundPoint(Vec3 point, {double margin = 0.75}) {
@@ -102,7 +98,6 @@ class PlotState {
   }
 }
 
-/// Low-poly vehicle archetypes from GDD Section 8.
 enum VehicleKind {
   compactCar,
   pickupTruck,
@@ -141,8 +136,6 @@ class VehicleEntity {
   Vec3 position;
   double yaw;
   double speed;
-
-  /// +1 moving East (+X), -1 moving West (-X).
   final int direction;
   VehiclePhase phase;
   int parkingSlotIndex;
@@ -195,12 +188,13 @@ class VisitorEntity {
   final List<Vec3> returnPath;
 }
 
-/// Floating `$` popup indicator when tapping or when visitors complete a purchase.
+/// Floating `$` popup indicator with lateral arc drift so rapid taps never smudge together.
 class FloatingCash {
   FloatingCash({
     required this.position,
     required this.text,
     required this.color,
+    this.driftX = 0.0,
     this.age = 0.0,
     this.duration = 1.15,
   });
@@ -208,6 +202,7 @@ class FloatingCash {
   final Vec3 position;
   final String text;
   final Color color;
+  final double driftX;
   double age;
   final double duration;
 
@@ -215,7 +210,7 @@ class FloatingCash {
   bool get isDone => age >= duration;
 }
 
-/// Short dust puff or coin sparkle particle in 3D space.
+/// Short dust puff or golden coin sparkle particle in 3D space.
 class Particle3D {
   Particle3D({
     required this.position,
@@ -239,7 +234,6 @@ class Particle3D {
   bool get isDone => age >= duration;
 }
 
-/// Optional decorative low-poly props the player can add around the outpost.
 enum DecorationKind {
   saguaroCluster,
   woodenSignpost,
@@ -282,7 +276,6 @@ class MilestoneData {
   bool claimed;
 }
 
-/// Progressive roadside parking & infrastructure tiers (Tier 0 -> Tier 3).
 class ParkingTierData {
   const ParkingTierData({
     required this.tier,
@@ -324,13 +317,13 @@ const List<ParkingTierData> kParkingTiers = [
   ParkingTierData(
     tier: 3,
     name: 'Paved Outpost Lot',
-    subtitle: '6 asphalt bays + driveways + Welcome Billboard & fences',
+    subtitle: '6 asphalt bays + driveways + Welcome Billboard & string lights',
     cost: 550,
     spaces: 6,
   ),
 ];
 
-/// Catalog of all 8 Desert Outpost businesses following GDD Stages 1–6.
+/// Balanced catalog of all 8 Desert Outpost businesses across Stages 1–6.
 const Map<BusinessType, BusinessData> kBusinessCatalog = {
   BusinessType.vendorStall: BusinessData(
     type: BusinessType.vendorStall,
@@ -342,13 +335,12 @@ const Map<BusinessType, BusinessData> kBusinessCatalog = {
     upgradeCostBase: 65,
     upgradeMultiplier: 1.75,
     maxLevel: 5,
-    icon: Icons.storefront_rounded,
     accentColor: Color(0xFFC8794B),
     upgradeNotes: [
       'Build wooden stall, striped awning & string lights',
       'Add rooftop DRINKS sign & shaded patio umbrella',
-      'Deluxe counter bottles & cooler capacity',
-      'Flagship desert refreshment stand',
+      'Woven Navajo banner & festoon string-light pole',
+      'Flagship twin-umbrella stand & desert pennant mast',
     ],
   ),
   BusinessType.convenienceStore: BusinessData(
@@ -361,13 +353,12 @@ const Map<BusinessType, BusinessData> kBusinessCatalog = {
     upgradeCostBase: 110,
     upgradeMultiplier: 1.78,
     maxLevel: 5,
-    icon: Icons.local_convenience_store_rounded,
     accentColor: Color(0xFF4F9A94),
     upgradeNotes: [
-      'Shaded porch & ice chest',
-      'Rooftop billboard & night lights',
-      'Expanded adobe annex & racks',
-      'Flagship highway trading post',
+      'Shaded porch, ice chest & glowing soda vendor',
+      'Expanded adobe annex & rooftop AC stack',
+      'Covered firewood trading rack & adobe frieze',
+      'Rooftop solar array & spinning brass weathervane',
     ],
   ),
   BusinessType.foodStand: BusinessData(
@@ -380,32 +371,30 @@ const Map<BusinessType, BusinessData> kBusinessCatalog = {
     upgradeCostBase: 180,
     upgradeMultiplier: 1.8,
     maxLevel: 5,
-    icon: Icons.local_cafe_rounded,
     accentColor: Color(0xFFC9533E),
     upgradeNotes: [
-      'Shaded umbrellas & bar stools',
-      'Rooftop coffee cup marquee',
-      'Patio string lights & double grill',
-      'Signature desert espresso bar',
+      'Steaming rooftop espresso mug & CAFE marquee',
+      'Shaded red patio umbrella & cactus planter',
+      'Twin turquoise patio umbrella & golden neon trim',
+      'Signature festoon string-light espresso pergola',
     ],
   ),
   BusinessType.desertDiner: BusinessData(
     type: BusinessType.desertDiner,
     stage: 3,
     name: 'Route 163 Diner',
-    subtitle: 'Stage 3 · Classic Utah roadside diner',
+    subtitle: 'Stage 3 · Streamlined Googie roadside diner',
     purchaseCost: 520,
     baseIncomePerMin: 140,
     upgradeCostBase: 320,
     upgradeMultiplier: 1.82,
     maxLevel: 5,
-    icon: Icons.restaurant_rounded,
     accentColor: Color(0xFFD96448),
     upgradeNotes: [
-      'Outdoor patio tables & awning',
-      'Glowing neon marquee & vents',
-      'Expanded booth wing & jukebox',
-      'Famous Monument Valley diner',
+      'Outdoor turquoise patio tables & umbrellas',
+      'Spinning golden rooftop starburst beacon',
+      'Swept Googie side roof fins & jukebox glow',
+      'Twin neon Googie starbursts & flagship plaza',
     ],
   ),
   BusinessType.gasStation: BusinessData(
@@ -418,13 +407,30 @@ const Map<BusinessType, BusinessData> kBusinessCatalog = {
     upgradeCostBase: 520,
     upgradeMultiplier: 1.84,
     maxLevel: 5,
-    icon: Icons.local_gas_station_rounded,
     accentColor: Color(0xFFDF9D42),
     upgradeNotes: [
-      'Extra pump island & glowing canopy',
-      'Tall highway price totem & tools',
-      'Express tire & repair bay upgrade',
-      'Full-service desert travel plaza',
+      'Tall illuminated highway GAS price totem',
+      'Mechanic tool chest, oil drum & spare tire stack',
+      'Garage solar panels & turquoise air/water stand',
+      'Rotating golden highway star-shield beacon',
+    ],
+  ),
+  BusinessType.oasisPlaza: BusinessData(
+    type: BusinessType.oasisPlaza,
+    stage: 5,
+    name: 'Oasis Souvenir Plaza',
+    subtitle: 'Stage 5 · Plunge pool, palms & craft market',
+    purchaseCost: 1250,
+    baseIncomePerMin: 285,
+    upgradeCostBase: 680,
+    upgradeMultiplier: 1.84,
+    maxLevel: 5,
+    accentColor: Color(0xFF5DA9B8),
+    upgradeNotes: [
+      'Sculpted desert palm tree & potted agave',
+      'Turquoise poolside umbrella & craft lounge',
+      'Twin desert palms & red-rock pool waterfall',
+      'Evening oasis lantern wires & golden sun crest',
     ],
   ),
   BusinessType.desertMotel: BusinessData(
@@ -437,13 +443,12 @@ const Map<BusinessType, BusinessData> kBusinessCatalog = {
     upgradeCostBase: 850,
     upgradeMultiplier: 1.86,
     maxLevel: 5,
-    icon: Icons.hotel_rounded,
     accentColor: Color(0xFFA9573D),
     upgradeNotes: [
-      'Upper balcony & illuminated rooms',
-      'Vintage glowing MOTEL rooftop sign',
-      'Cozy timber guest cabin annex',
-      'Starlight desert resort suites',
+      'Second-story timber balcony & exterior stairs',
+      'Cozy pitched-roof guest cabin & stone chimney',
+      'Courtyard guest umbrella lounge & planters',
+      'Rooftop redwood water cistern & balcony lights',
     ],
   ),
   BusinessType.lookoutCamp: BusinessData(
@@ -456,32 +461,12 @@ const Map<BusinessType, BusinessData> kBusinessCatalog = {
     upgradeCostBase: 1300,
     upgradeMultiplier: 1.88,
     maxLevel: 5,
-    icon: Icons.terrain_rounded,
     accentColor: Color(0xFF79805A),
     upgradeNotes: [
-      'Canvas desert tents & campfire',
-      'Elevated wooden lookout deck',
-      'Tour pavilion & evening lanterns',
-      'Grand canyon adventure basecamp',
-    ],
-  ),
-  BusinessType.oasisPlaza: BusinessData(
-    type: BusinessType.oasisPlaza,
-    stage: 6,
-    name: 'Oasis Souvenir Plaza',
-    subtitle: 'Stage 6 · Desert pool, palms & craft market',
-    purchaseCost: 450,
-    baseIncomePerMin: 165,
-    upgradeCostBase: 360,
-    upgradeMultiplier: 1.82,
-    maxLevel: 5,
-    icon: Icons.wb_sunny_rounded,
-    accentColor: Color(0xFF5DA9B8),
-    upgradeNotes: [
-      'Shaded pergolas & craft stalls',
-      'Turquoise plunge pool & loungers',
-      'Evening oasis lanterns & arch',
-      'Premier Utah desert oasis',
+      'Canvas desert A-frame tents & campfire',
+      'Shaded trailhead tour patio & map deck',
+      'High-altitude festoon lights up to Lookout Tower',
+      'Fluttering canyon summit flag & grand basecamp',
     ],
   ),
 };

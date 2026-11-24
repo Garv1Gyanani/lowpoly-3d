@@ -1,11 +1,12 @@
 import 'dart:math' as math;
-import 'dart:ui';
 
 import '../../engine/lighting.dart';
 import '../../engine/mesh_builder.dart';
 import '../../engine/vec3.dart';
+import '../../theme/desert_palette.dart';
 
-/// Faceted 3D low-poly desert clouds floating high above Monument Valley.
+/// Luminous faceted 3D low-poly desert clouds floating high above Monument Valley.
+/// Uses `isCloud: true` subsurface bounce shading so undersides stay warm and airy in front of the sun!
 class SkyClouds {
   const SkyClouds._();
 
@@ -14,19 +15,13 @@ class SkyClouds {
     DesertLighting lighting,
     double animTime,
   ) {
-    final drift = math.sin(animTime * 0.08) * 2.2;
-    Color cloudCol = Color.lerp(
-      const Color(0xFFFFF4E7),
-      const Color(0xFFFFC194),
-      lighting.sunsetFactor * 0.85,
-    )!;
-    cloudCol = Color.lerp(cloudCol, const Color(0xFF334B6E), lighting.nightFactor * 0.9)!;
+    final drift = math.sin(animTime * 0.08) * 2.4;
 
     final rightPuffs = [
-      (Vec3(7.0 + drift, 26.5, -62.0), 5.8, 1.8, 3.0),
-      (Vec3(14.0 + drift, 28.0, -63.0), 6.8, 2.8, 3.5),
-      (Vec3(22.0 + drift, 30.0, -64.0), 7.8, 4.0, 4.0),
-      (Vec3(30.5 + drift, 28.8, -63.5), 7.0, 3.2, 3.6),
+      (Vec3(8.5 + drift, 26.8, -62.0), 5.6, 1.7, 2.9),
+      (Vec3(15.2 + drift, 28.2, -63.0), 6.6, 2.7, 3.4),
+      (Vec3(23.0 + drift, 30.0, -64.0), 7.6, 3.8, 3.9),
+      (Vec3(31.2 + drift, 28.8, -63.5), 6.8, 3.0, 3.5),
     ];
     for (final (pos, rx, h, rz) in rightPuffs) {
       mesh.addFrustum(
@@ -39,16 +34,17 @@ class SkyClouds {
         rz * 0.68,
         h,
         7,
-        cloudCol,
-        topColor: cloudCol,
+        DesertPalette.cloudSunlit,
+        topColor: DesertPalette.cloudSunlit,
         layer: RenderLayer.world,
-        distanceFade: 0.08,
+        isCloud: true,
+        distanceFade: 0.06,
       );
     }
 
     final leftPuffs = [
-      (Vec3(-22.0 + drift * 0.6, 27.5, -65.0), 6.2, 1.8, 2.8),
-      (Vec3(-14.5 + drift * 0.6, 28.4, -65.5), 5.6, 2.2, 2.6),
+      (Vec3(-25.5 + drift * 0.6, 27.6, -65.0), 6.0, 1.8, 2.8),
+      (Vec3(-18.2 + drift * 0.6, 28.5, -65.5), 5.4, 2.2, 2.6),
     ];
     for (final (pos, rx, h, rz) in leftPuffs) {
       mesh.addFrustum(
@@ -61,10 +57,11 @@ class SkyClouds {
         rz * 0.65,
         h,
         6,
-        cloudCol,
-        topColor: cloudCol,
+        DesertPalette.cloudSunlit,
+        topColor: DesertPalette.cloudSunlit,
         layer: RenderLayer.world,
-        distanceFade: 0.10,
+        isCloud: true,
+        distanceFade: 0.08,
       );
     }
   }

@@ -16,9 +16,25 @@ import 'buildings/oasis_plaza.dart';
 import 'buildings/outpost_mart.dart';
 import 'buildings/vendor_stall.dart';
 
-/// Dispatches each construction plot to its dedicated modular low-poly building file.
+/// Dispatches each construction plot to its dedicated modular low-poly building file,
+/// applying grounded squash-and-stretch animations (`y = 0` stays planted!) and subtle organic angles.
 class BuildingModels {
   const BuildingModels._();
+
+  /// Returns true when a plot has no per-frame mesh animation and can be baked into
+  /// the static world cache for maximum FPS.
+  static bool isStaticPlot(PlotState plot, {required bool isSelected}) {
+    if (!plot.isBuilt || isSelected) return false;
+    if (plot.bounceTimer > 0 || plot.buildPopTimer > 0) return false;
+    return switch (plot.businessType) {
+      BusinessType.convenienceStore => plot.level < 5,
+      BusinessType.gasStation => plot.level < 5,
+      BusinessType.desertMotel => true,
+      BusinessType.desertDiner => plot.level < 3,
+      BusinessType.foodStand => plot.level < 2,
+      _ => false,
+    };
+  }
 
   static void buildPlot(
     MeshBuilder mesh,
@@ -27,53 +43,63 @@ class BuildingModels {
     double animTime, {
     required bool isSelected,
   }) {
-    final shadowCol = Color.from(
-      alpha: lighting.shadowAlpha,
-      red: 0.22,
-      green: 0.13,
-      blue: 0.10,
-    );
+    final shadowCol = lighting.shadowColor;
 
     if (isSelected) {
       final pulse = 0.55 + 0.35 * math.sin(animTime * 5.0);
-      mesh.addGroundRect(
-        plot.position.x,
-        0.04,
-        plot.position.z,
-        plot.footprintWidth + 0.6,
-        plot.footprintDepth + 0.6,
-        DesertPalette.gold.withValues(alpha: 0.28 * pulse),
-        layer: RenderLayer.groundDecal,
-        depthBias: -0.3,
-        unlit: true,
-        outlineColor: DesertPalette.gold.withValues(alpha: 0.85),
-      );
+      mesh.withTransform(plot.position, plot.yaw, () {
+        mesh.addGroundRect(
+          0,
+          0.04,
+          0,
+          plot.footprintWidth + 0.6,
+          plot.footprintDepth + 0.6,
+          DesertPalette.gold.withValues(alpha: 0.28 * pulse),
+          layer: RenderLayer.groundDecal,
+          depthBias: -0.3,
+          unlit: true,
+          outlineColor: DesertPalette.gold.withValues(alpha: 0.85),
+        );
+      });
     }
 
     if (!plot.isBuilt) {
-      EmptyPlotBuilding.build(mesh, plot, animTime);
+      EmptyPlotBuilding.build(mesh, plot, lighting);
       return;
     }
 
-    double liftY = 0.0;
+    // Grounded elastic squash-and-stretch (`y = 0` stays firmly planted on sand!)
+    double scaleY = 1.0;
+    double scaleXZ = 1.0;
+
     if (plot.bounceTimer > 0) {
-      liftY += math.sin(plot.bounceTimer * math.pi * 4.0).abs() * 0.20;
+      final t = plot.bounceTimer / 0.38;
+      final wave = math.sin(t * math.pi * 2.5) * t.clamp(0.0, 1.0);
+      scaleY = 1.0 + wave * 0.14;
+      scaleXZ = 1.0 - wave * 0.065;
     }
     if (plot.buildPopTimer > 0) {
-      final t = 1.0 - plot.buildPopTimer.clamp(0.0, 1.0);
-      liftY -= (1.0 - t) * 1.4;
+      final progress = (1.0 - plot.buildPopTimer).clamp(0.0, 1.0);
+      // Overshoot spring curve: 0.3 -> 1.08 -> 1.0
+      final ease = 1.0 - math.pow(1.0 - progress, 3);
+      final spring = ease + math.sin(progress * math.pi) * 0.10;
+      scaleY *= (0.28 + 0.72 * spring);
+      scaleXZ *= (0.55 + 0.45 * spring);
     }
 
-    final origin = Vec3(plot.position.x, liftY, plot.position.z);
-    buildByType(
-      mesh,
-      plot.businessType,
-      origin,
-      plot.level,
-      lighting,
-      shadowCol,
-      animTime,
-    );
+    mesh.withTransform(plot.position, plot.yaw, () {
+      mesh.withScale(scaleXZ, scaleY, () {
+        buildByType(
+          mesh,
+          plot.businessType,
+          Vec3.zero,
+          plot.level,
+          lighting,
+          shadowCol,
+          animTime,
+        );
+      });
+    });
   }
 
   /// Renders any building archetype directly at [origin] (used by both the city and the 3D Object Studio).
@@ -90,13 +116,13 @@ class BuildingModels {
       case BusinessType.vendorStall:
         VendorStallBuilding.build(mesh, origin, level, lighting, shadowCol, animTime);
       case BusinessType.convenienceStore:
-        OutpostMartBuilding.build(mesh, origin, level, lighting, shadowCol);
+        OutpostMartBuilding.build(mesh, origin, level, lighting, shadowCol, animTime);
       case BusinessType.foodStand:
         FoodStandBuilding.build(mesh, origin, level, lighting, shadowCol, animTime);
       case BusinessType.desertDiner:
         DesertDinerBuilding.build(mesh, origin, level, lighting, shadowCol, animTime);
       case BusinessType.gasStation:
-        GasStationBuilding.build(mesh, origin, level, lighting, shadowCol);
+        GasStationBuilding.build(mesh, origin, level, lighting, shadowCol, animTime);
       case BusinessType.desertMotel:
         DesertMotelBuilding.build(mesh, origin, level, lighting, shadowCol);
       case BusinessType.lookoutCamp:

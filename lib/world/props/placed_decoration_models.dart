@@ -8,9 +8,12 @@ import '../../models/game_models.dart';
 import '../../theme/desert_palette.dart';
 import '../props/desert_flora_and_rocks.dart';
 
-/// Player-placeable desert outpost decorations (cacti, signposts, picnic sets, lamps, campfires).
+/// Player-placeable desert outpost decorations with grounded contact shadows.
 class PlacedDecorationModels {
   const PlacedDecorationModels._();
+
+  static bool isAnimated(PlacedDecoration deco) =>
+      deco.kind == DecorationKind.campfireRing;
 
   static void build(
     MeshBuilder mesh,
@@ -18,30 +21,58 @@ class PlacedDecorationModels {
     DesertLighting lighting,
     double animTime,
   ) {
-    final shadowCol = Color.from(
-      alpha: lighting.shadowAlpha,
-      red: 0.22,
-      green: 0.13,
-      blue: 0.10,
-    );
+    final shadowCol = lighting.shadowColor;
 
     switch (deco.kind) {
       case DecorationKind.saguaroCluster:
         DesertFloraAndRocks.addSaguaro(mesh, deco.position, 1.05, 0.5, lighting, shadowCol);
-        DesertFloraAndRocks.addDesertBush(mesh, deco.position + const Vec3(0.6, 0, 0.3), 0.45);
+        DesertFloraAndRocks.addDesertBush(
+          mesh,
+          deco.position + const Vec3(0.6, 0, 0.3),
+          0.45,
+          lighting: lighting,
+          shadowCol: shadowCol,
+        );
       case DecorationKind.woodenSignpost:
-        mesh.withTransform(deco.position, 0.15, () {
+        mesh.addBoxShadow(
+          deco.position.x,
+          deco.position.z,
+          0.6,
+          0.4,
+          2.0,
+          lighting.shadowDirection,
+          shadowCol,
+        );
+        mesh.withTransform(deco.position, 0.18, () {
           mesh.addBox(0, 0, 0, 0.15, 2.0, 0.15, DesertPalette.woodDark);
           mesh.addBox(0.38, 1.55, 0, 0.95, 0.26, 0.09, DesertPalette.cream);
           mesh.addBox(-0.34, 1.18, 0, 0.85, 0.24, 0.09, DesertPalette.terracotta);
         });
       case DecorationKind.picnicSet:
-        mesh.withTransform(deco.position, 0, () {
+        mesh.addBoxShadow(
+          deco.position.x,
+          deco.position.z,
+          1.35,
+          1.45,
+          0.65,
+          lighting.shadowDirection,
+          shadowCol,
+        );
+        mesh.withTransform(deco.position, 0.08, () {
           mesh.addBox(0, 0, 0, 1.15, 0.58, 0.72, DesertPalette.woodLight);
           mesh.addBox(0, 0, -0.58, 1.05, 0.34, 0.28, DesertPalette.wood);
           mesh.addBox(0, 0, 0.58, 1.05, 0.34, 0.28, DesertPalette.wood);
         });
       case DecorationKind.desertLamp:
+        mesh.addBoxShadow(
+          deco.position.x,
+          deco.position.z,
+          0.36,
+          0.36,
+          2.45,
+          lighting.shadowDirection,
+          shadowCol,
+        );
         mesh.withTransform(deco.position, 0, () {
           mesh.addBox(0, 0, 0, 0.14, 2.4, 0.14, DesertPalette.woodDark);
           mesh.addBox(
@@ -58,6 +89,16 @@ class PlacedDecorationModels {
           mesh.addGlow(const Vec3(0, 2.55, 0), DesertPalette.windowNight, radius: 34, intensity: 0.82);
         });
       case DecorationKind.campfireRing:
+        mesh.addDiscShadow(
+          deco.position.x,
+          deco.position.y,
+          deco.position.z,
+          0.62,
+          0.62,
+          0.45,
+          lighting.shadowDirection,
+          shadowCol,
+        );
         mesh.withTransform(deco.position, 0, () {
           mesh.addFrustum(0, 0, 0, 0.56, 0.56, 0.48, 0.48, 0.20, 7, DesertPalette.metal);
           final flick = 0.75 + math.sin(animTime * 9.0) * 0.2;

@@ -7,8 +7,7 @@ import '../../engine/mesh_parts.dart';
 import '../../engine/vec3.dart';
 import '../../theme/desert_palette.dart';
 
-/// STAGE 3A: Desert Food Stand & Coffee Kiosk ("CAFE") with festive fiesta bunting pennants,
-/// bar stools with backrests, steaming rooftop coffee mug with cream foam, and chalkboard menu.
+/// STAGE 3A: Desert Food Stand & Coffee Kiosk ("CAFE") evolving visually through Level 5.
 class FoodStandBuilding {
   const FoodStandBuilding._();
 
@@ -20,34 +19,23 @@ class FoodStandBuilding {
     Color shadowCol,
     double animTime,
   ) {
-    mesh.addBoxShadow(
-      origin.x,
-      origin.z,
-      3.5,
-      2.6,
-      2.6,
-      lighting.shadowDirection,
-      shadowCol,
-    );
-
     mesh.withTransform(origin, 0, () {
+      mesh.addBoxShadow(0, 0, 3.5, 2.6, 2.6, lighting.shadowDirection, shadowCol);
+
       mesh.addBox(0, 0, 0.1, 3.75, 0.16, 2.85, DesertPalette.concrete);
       mesh.addBox(0, 0.16, -0.18, 2.85, 2.20, 1.95, DesertPalette.terracotta);
       mesh.addBox(0, 2.18, -0.18, 3.0, 0.24, 2.10, DesertPalette.cream);
 
-      // Serving counter window, chalkboard menu side panel & wooden bar shelf
       mesh.addFrontWindow(0, 1.38, 0.80, 1.88, 0.84, const Color(0xFF3E2D24), DesertPalette.windowNight);
       mesh.addFlushRectOnZ(-1.18, 1.38, 0.81, 0.36, 0.68, const Color(0xFF2F3638), positiveZ: true);
       mesh.addBox(0, 0.90, 0.95, 2.25, 0.11, 0.42, DesertPalette.woodLight);
 
-      // Bar stools with cushions & low metal backrests
       for (final sx in [-0.70, 0.0, 0.70]) {
         mesh.addBox(sx, 0.16, 1.22, 0.11, 0.52, 0.11, DesertPalette.metalDark);
         mesh.addBox(sx, 0.68, 1.22, 0.32, 0.10, 0.32, DesertPalette.awningRed);
         mesh.addBox(sx, 0.78, 1.35, 0.26, 0.20, 0.05, DesertPalette.metalDark);
       }
 
-      // Striped front canopy + colorful fiesta triangle pennant bunting + glowing bulbs
       mesh.addSlopedAwning(
         0,
         2.18,
@@ -93,7 +81,6 @@ class FoodStandBuilding {
         );
       }
 
-      // Level 2+: Rooftop illuminated CAFE sign + steaming low-poly coffee cup with cream foam!
       if (level >= 2) {
         MeshParts.addMarqueeSign(
           mesh,
@@ -122,7 +109,6 @@ class FoodStandBuilding {
           DesertPalette.cream,
           topColor: DesertPalette.woodDark,
         );
-        // Creamy espresso foam dome
         mesh.addFrustum(0, 3.18, -0.38, 0.36, 0.36, 0.14, 0.14, 0.14, 8, DesertPalette.cream);
         mesh.addBox(0.48, 2.66, -0.38, 0.22, 0.32, 0.11, DesertPalette.cream);
 
@@ -146,7 +132,6 @@ class FoodStandBuilding {
         }
       }
 
-      // Level 3+: Patio table with red sun umbrella & cactus planter
       if (level >= 3) {
         MeshParts.addPatioUmbrellaTable(
           mesh,
@@ -157,6 +142,44 @@ class FoodStandBuilding {
           scale: 0.94,
         );
         MeshParts.addPottedCactus(mesh, cx: 1.56, yBottom: 0.16, cz: 0.88);
+      }
+
+      // Level 4+: Right-side turquoise patio umbrella + warm neon roofline trim!
+      if (level >= 4) {
+        MeshParts.addPatioUmbrellaTable(
+          mesh,
+          cx: 2.02,
+          yBottom: 0.16,
+          cz: 0.45,
+          umbrellaColor: DesertPalette.turquoise,
+          scale: 0.94,
+        );
+        mesh.addBox(
+          0,
+          2.36,
+          -0.18,
+          3.06,
+          0.07,
+          2.16,
+          DesertPalette.gold,
+          emissiveColor: DesertPalette.neonWarm,
+          emissiveStrength: 0.92,
+        );
+      }
+
+      // Level 5: Signature espresso patio string-light pergola posts!
+      if (level >= 5) {
+        for (final px in [-2.45, 2.45]) {
+          mesh.addBox(px, 0.16, 1.35, 0.12, 2.20, 0.12, DesertPalette.woodDark);
+        }
+        mesh.addSaggingWire(
+          const Vec3(-2.45, 2.30, 1.35),
+          const Vec3(2.45, 2.30, 1.35),
+          DesertPalette.woodDark,
+          sag: 0.24,
+          bulbCount: 5,
+          bulbGlowColor: DesertPalette.windowNight,
+        );
       }
 
       mesh.addGlow(

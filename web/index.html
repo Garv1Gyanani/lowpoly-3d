@@ -1,46 +1,70 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="description" content="Desert Outpost — Low-poly 3D Monument Valley idle diorama.">
+  <meta name="theme-color" content="#C8794B">
 
-  <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="desert_outpost">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Desert Outpost">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
-
-  <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>desert_outpost</title>
+  <title>Desert Outpost</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: linear-gradient(180deg, #6693C9 0%, #AAC2DF 50%, #F7CCA6 100%);
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    #desert-loader {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      color: #35261D;
+      pointer-events: none;
+      transition: opacity 0.35s ease;
+    }
+    .loader-badge {
+      padding: 10px 20px;
+      background: #4B2E1E;
+      color: #FFF6E3;
+      border: 3px solid #7B4F34;
+      border-radius: 16px;
+      font-weight: 900;
+      letter-spacing: 1.5px;
+      font-size: 15px;
+      box-shadow: 0 5px 0 #341E13;
+    }
+  </style>
 </head>
-<body>
-  <!--
-    You can customize the "flutter_bootstrap.js" script.
-    This is useful to provide a custom configuration to the Flutter loader
-    or to give the user feedback during the initialization process.
-
-    For more details:
-    * https://docs.flutter.dev/platform-integration/web/initialization
-  -->
+<body oncontextmenu="return false;">
+  <div id="desert-loader">
+    <div class="loader-badge">DESERT OUTPOST</div>
+  </div>
+  <script>
+    window.addEventListener('flutter-first-frame', function () {
+      const loader = document.getElementById('desert-loader');
+      if (loader) {
+        loader.style.opacity = '0';
+        setTimeout(() => loader.remove(), 400);
+      }
+    });
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

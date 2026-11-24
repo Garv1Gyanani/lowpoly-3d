@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'dart:ui';
 
 import '../engine/lighting.dart';
 import '../engine/mesh_builder.dart';
@@ -18,17 +17,16 @@ import 'vehicles/tourist_van.dart';
 class EntityModels {
   const EntityModels._();
 
+  static bool isAnimatedDecoration(PlacedDecoration deco) =>
+      PlacedDecorationModels.isAnimated(deco);
+
   static void buildVehicle(
     MeshBuilder mesh,
     VehicleEntity v,
     DesertLighting lighting,
   ) {
-    final shadowCol = Color.from(
-      alpha: lighting.shadowAlpha * 0.9,
-      red: 0.18,
-      green: 0.12,
-      blue: 0.10,
-    );
+    final shadowCol = lighting.shadowColor;
+    final contactCol = lighting.contactShadowColor;
 
     final (len, wid, bodyH) = switch (v.kind) {
       VehicleKind.compactCar => (
@@ -58,28 +56,46 @@ class EntityModels {
         ),
     };
 
-    // Oriented ground shadow matching live vehicle yaw
-    final hl = len * 0.52;
-    final hw = wid * 0.54;
+    // Oriented two-stage ground shadow (tight wheel contact AO + directional sun cast shadow)
+    final hl = len * 0.50;
+    final hw = wid * 0.52;
     final sOff = lighting.shadowDirection * ((bodyH + 0.4) * 0.34);
     final c = math.cos(v.yaw);
     final s = math.sin(v.yaw);
-    Vec3 rot(double lx, double lz) => Vec3(
+
+    Vec3 rotCast(double lx, double lz) => Vec3(
           v.position.x + lx * c - lz * s + sOff.x,
-          0.02,
+          0.038,
           v.position.z + lx * s + lz * c + sOff.z,
         );
+    Vec3 rotContact(double lx, double lz) => Vec3(
+          v.position.x + lx * c - lz * s,
+          0.039,
+          v.position.z + lx * s + lz * c,
+        );
+
     mesh.addGroundPoly(
-      [rot(-hl, -hw), rot(-hl, hw), rot(hl, hw), rot(hl, -hw)],
+      [rotCast(-hl, -hw), rotCast(-hl, hw), rotCast(hl, hw), rotCast(hl, -hw)],
       shadowCol,
       layer: RenderLayer.shadow,
+      unlit: true,
+    );
+    mesh.addGroundPoly(
+      [
+        rotContact(-hl * 0.96, -hw * 0.96),
+        rotContact(-hl * 0.96, hw * 0.96),
+        rotContact(hl * 0.96, hw * 0.96),
+        rotContact(hl * 0.96, -hw * 0.96),
+      ],
+      contactCol,
+      layer: RenderLayer.shadow,
+      depthBias: -0.02,
       unlit: true,
     );
 
     final headlightsOn = v.phase != VehiclePhase.parked;
     final reversing = v.phase == VehiclePhase.backingOut;
 
-    // Sort-group anchor at center of vehicle ensures zero internal face-popping during turns/motion!
     mesh.withSortGroup(v.position + const Vec3(0, 0.55, 0), () {
       mesh.withTransform(v.position, v.yaw, () {
         switch (v.kind) {

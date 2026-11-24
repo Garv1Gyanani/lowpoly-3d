@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/widgets.dart';
 
 import '../engine/camera_3d.dart';
 import '../engine/lighting.dart';
@@ -14,6 +15,8 @@ import '../world/props/desert_flora_and_rocks.dart';
 import '../world/props/desert_windmill.dart';
 import '../world/props/roadside_welcome_sign.dart';
 import '../world/terrain/monument_mesas.dart';
+import 'game_hud_widgets.dart';
+import 'game_icons.dart';
 
 enum _StudioAssetKind {
   vendorStall,
@@ -58,7 +61,7 @@ const List<_StudioAssetEntry> _studioCatalog = [
     kind: _StudioAssetKind.vendorStall,
     label: 'Cart / Stall',
     filePath: 'buildings/vendor_cart.dart',
-    cameraDistance: 12.0,
+    cameraDistance: 11.5,
     targetY: 1.4,
     hasLevels: true,
   ),
@@ -66,7 +69,7 @@ const List<_StudioAssetEntry> _studioCatalog = [
     kind: _StudioAssetKind.outpostMart,
     label: 'Outpost Mart',
     filePath: 'buildings/outpost_mart.dart',
-    cameraDistance: 15.5,
+    cameraDistance: 15.0,
     targetY: 2.0,
     hasLevels: true,
   ),
@@ -183,7 +186,8 @@ const List<_StudioAssetEntry> _studioCatalog = [
   ),
 ];
 
-/// Interactive 360-degree turntable inspector for polishing each modular 3D object individually.
+/// Interactive 360-degree turntable inspector supporting all 5 building upgrade levels (Lv1–Lv5),
+/// built cleanly on pure `flutter/widgets.dart` with carved-wood game styling.
 class ObjectStudioScreen extends StatefulWidget {
   const ObjectStudioScreen({super.key});
 
@@ -249,28 +253,38 @@ class _ObjectStudioScreenState extends State<ObjectStudioScreen>
   Widget build(BuildContext context) {
     final lighting = DesertLighting.fromTime(_timeOfDay);
 
-    return Scaffold(
-      backgroundColor: DesertPalette.sky,
-      body: Stack(
+    return ColoredBox(
+      color: DesertPalette.sky,
+      child: Stack(
         fit: StackFit.expand,
         children: [
-          GestureDetector(
-            onPanStart: (_) => setState(() => _autoRotate = false),
-            onPanUpdate: (details) {
-              setState(() {
-                _camera.yaw -= details.delta.dx * 0.012;
-                _camera.pitch = (_camera.pitch + details.delta.dy * 0.008).clamp(0.08, 0.85);
-              });
+          Listener(
+            onPointerSignal: (event) {
+              if (event is PointerScrollEvent) {
+                setState(() {
+                  final factor = event.scrollDelta.dy > 0 ? 1.08 : 0.92;
+                  _camera.distance = (_camera.distance * factor).clamp(4.5, 48.0);
+                });
+              }
             },
-            child: CustomPaint(
-              painter: _StudioPainter(
-                asset: _asset,
-                level: _level,
-                camera: _camera,
-                lighting: lighting,
-                animTime: _animTime,
+            child: GestureDetector(
+              onPanStart: (_) => setState(() => _autoRotate = false),
+              onPanUpdate: (details) {
+                setState(() {
+                  _camera.yaw -= details.delta.dx * 0.012;
+                  _camera.pitch = (_camera.pitch + details.delta.dy * 0.008).clamp(0.08, 0.85);
+                });
+              },
+              child: CustomPaint(
+                painter: _StudioPainter(
+                  asset: _asset,
+                  level: _level,
+                  camera: _camera,
+                  lighting: lighting,
+                  animTime: _animTime,
+                ),
+                size: Size.infinite,
               ),
-              size: Size.infinite,
             ),
           ),
 
@@ -281,160 +295,168 @@ class _ObjectStudioScreenState extends State<ObjectStudioScreen>
             right: 0,
             child: SafeArea(
               bottom: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
-                child: Row(
-                  children: [
-                    Material(
-                      color: DesertPalette.uiSurface.withValues(alpha: 0.94),
-                      borderRadius: BorderRadius.circular(16),
-                      child: InkWell(
-                        onTap: () => Navigator.of(context).pop(),
-                        borderRadius: BorderRadius.circular(16),
-                        child: const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 820),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+                    child: Row(
+                      children: [
+                        GameBevelButton(
+                          onTap: () => Navigator.of(context).maybePop(),
+                          radius: 14,
+                          bevelDepth: 3.0,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.arrow_back_rounded, size: 18, color: DesertPalette.uiInk),
-                              SizedBox(width: 6),
+                              const GameIcon(GameIconKind.arrowBack, size: 16, color: Color(0xFFFFF2D4)),
+                              const SizedBox(width: 6),
                               Text(
                                 'Back',
-                                style: TextStyle(
-                                  color: DesertPalette.uiInk,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 13,
-                                ),
+                                style: DesertTypography.display(size: 11.5, color: const Color(0xFFFFF2D4)),
                               ),
                             ],
                           ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                        decoration: BoxDecoration(
-                          color: DesertPalette.uiSurface.withValues(alpha: 0.92),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              _asset.label,
-                              style: const TextStyle(
-                                color: DesertPalette.uiInk,
-                                fontWeight: FontWeight.w900,
-                                fontSize: 14,
-                              ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                            decoration: BoxDecoration(
+                              color: GameHudColors.parchment.withValues(alpha: 0.95),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: GameHudColors.woodFrame, width: 2.0),
                             ),
-                            Text(
-                              'lib/world/${_asset.filePath}',
-                              style: const TextStyle(
-                                color: DesertPalette.uiSubtle,
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w600,
-                              ),
-                              overflow: TextOverflow.ellipsis,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  _asset.label,
+                                  style: DesertTypography.display(
+                                    size: 13,
+                                    color: GameHudColors.ink,
+                                  ),
+                                ),
+                                Text(
+                                  'lib/world/${_asset.filePath}',
+                                  style: DesertTypography.ui(
+                                    size: 10.5,
+                                    weight: FontWeight.w600,
+                                    color: GameHudColors.inkMuted,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
                             ),
-                          ],
+                          ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Material(
-                      color: DesertPalette.uiSurface.withValues(alpha: 0.94),
-                      borderRadius: BorderRadius.circular(16),
-                      child: IconButton(
-                        onPressed: () => setState(() => _autoRotate = !_autoRotate),
-                        icon: Icon(
-                          _autoRotate ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                          color: DesertPalette.uiInk,
-                          size: 20,
+                        const SizedBox(width: 8),
+                        GameBevelButton(
+                          onTap: () => setState(() => _autoRotate = !_autoRotate),
+                          radius: 14,
+                          bevelDepth: 3.0,
+                          padding: const EdgeInsets.all(10),
+                          child: GameIcon(
+                            _autoRotate ? GameIconKind.pause : GameIconKind.play,
+                            color: const Color(0xFFFFF2D4),
+                            size: 18,
+                          ),
                         ),
-                        visualDensity: VisualDensity.compact,
-                      ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
             ),
           ),
 
-          // Bottom controls: Time-of-Day, Level toggle, and Asset selector strip
+          // Bottom controls: Time-of-Day, Lv1-Lv5 toggle, and Asset selector strip
           Positioned(
             left: 0,
             right: 0,
             bottom: 0,
             child: SafeArea(
               top: false,
-              child: Container(
-                margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-                decoration: BoxDecoration(
-                  color: DesertPalette.uiSurface.withValues(alpha: 0.95),
-                  borderRadius: BorderRadius.circular(22),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.18),
-                      blurRadius: 14,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        _chipButton('Day', _timeOfDay == 0.40, () => setState(() => _timeOfDay = 0.40)),
-                        const SizedBox(width: 6),
-                        _chipButton('Sunset', _timeOfDay == 0.74, () => setState(() => _timeOfDay = 0.74)),
-                        const SizedBox(width: 6),
-                        _chipButton('Night', _timeOfDay == 0.96, () => setState(() => _timeOfDay = 0.96)),
-                        const Spacer(),
-                        if (_asset.hasLevels) ...[
-                          _chipButton('Lv1', _level == 1, () => setState(() => _level = 1)),
-                          const SizedBox(width: 5),
-                          _chipButton('Lv2', _level == 2, () => setState(() => _level = 2)),
-                          const SizedBox(width: 5),
-                          _chipButton('Lv3', _level == 3, () => setState(() => _level = 3)),
-                        ],
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      height: 36,
-                      child: ListView.separated(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: _studioCatalog.length,
-                        separatorBuilder: (_, _) => const SizedBox(width: 6),
-                        itemBuilder: (context, index) {
-                          final item = _studioCatalog[index];
-                          final active = index == _selectedIndex;
-                          return ChoiceChip(
-                            label: Text(
-                              item.label,
-                              style: TextStyle(
-                                color: active ? Colors.white : DesertPalette.uiInk,
-                                fontWeight: FontWeight.w800,
-                                fontSize: 12,
-                              ),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 820),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                    child: GameWoodPanel(
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                      radius: 20,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                _chipButton('Day', _timeOfDay == 0.40, () => setState(() => _timeOfDay = 0.40)),
+                                const SizedBox(width: 6),
+                                _chipButton('Sunset', _timeOfDay == 0.74, () => setState(() => _timeOfDay = 0.74)),
+                                const SizedBox(width: 6),
+                                _chipButton('Night', _timeOfDay == 0.96, () => setState(() => _timeOfDay = 0.96)),
+                                if (_asset.hasLevels) ...[
+                                  const SizedBox(width: 14),
+                                  for (int lv = 1; lv <= 5; lv++) ...[
+                                    if (lv > 1) const SizedBox(width: 5),
+                                    _chipButton('Lv$lv', _level == lv, () => setState(() => _level = lv)),
+                                  ],
+                                ],
+                              ],
                             ),
-                            selected: active,
-                            selectedColor: DesertPalette.uiAccent,
-                            backgroundColor: DesertPalette.sandLight.withValues(alpha: 0.55),
-                            side: BorderSide.none,
-                            showCheckmark: false,
-                            onSelected: (_) => _selectAsset(index),
-                          );
-                        },
+                          ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            height: 36,
+                            child: ListView.separated(
+                              scrollDirection: Axis.horizontal,
+                              itemCount: _studioCatalog.length,
+                              separatorBuilder: (_, _) => const SizedBox(width: 6),
+                              itemBuilder: (context, index) {
+                                final item = _studioCatalog[index];
+                                final active = index == _selectedIndex;
+                                return MouseRegion(
+                                  cursor: SystemMouseCursors.click,
+                                  child: GestureDetector(
+                                    onTap: () => _selectAsset(index),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                                      decoration: BoxDecoration(
+                                        color: active
+                                            ? GameHudColors.terraTop
+                                            : GameHudColors.parchmentDark,
+                                        borderRadius: BorderRadius.circular(11),
+                                        border: Border.all(
+                                          color: active
+                                              ? GameHudColors.woodFrame
+                                              : GameHudColors.woodRim.withValues(alpha: 0.5),
+                                          width: 1.6,
+                                        ),
+                                      ),
+                                      child: Center(
+                                        child: Text(
+                                          item.label,
+                                          style: DesertTypography.ui(
+                                            size: 12,
+                                            weight: FontWeight.w700,
+                                            color: active ? const Color(0xFFFFFFFF) : GameHudColors.ink,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -445,21 +467,26 @@ class _ObjectStudioScreenState extends State<ObjectStudioScreen>
   }
 
   Widget _chipButton(String label, bool active, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: active ? DesertPalette.uiInk : DesertPalette.sandLight.withValues(alpha: 0.6),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: active ? Colors.white : DesertPalette.uiInk,
-            fontWeight: FontWeight.w800,
-            fontSize: 11.5,
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: active ? GameHudColors.woodFrame : GameHudColors.parchmentDark,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: active ? GameHudColors.woodDeep : GameHudColors.woodRim.withValues(alpha: 0.45),
+              width: 1.5,
+            ),
+          ),
+          child: Text(
+            label,
+            style: DesertTypography.display(
+              size: 10.5,
+              color: active ? const Color(0xFFFFF2D4) : GameHudColors.ink,
+            ),
           ),
         ),
       ),
@@ -487,15 +514,9 @@ class _StudioPainter extends CustomPainter {
     SceneRenderer3D.paintSkyDome(canvas, size, camera, lighting, animTime);
 
     final mesh = MeshBuilder();
-    final shadowCol = Color.from(
-      alpha: lighting.shadowAlpha,
-      red: 0.22,
-      green: 0.13,
-      blue: 0.10,
-    );
+    final shadowCol = lighting.shadowColor;
 
-    // Sculpted hexagonal desert turntable pedestal
-    final padR = asset.kind == _StudioAssetKind.westMittenButte ? 14.0 : 5.2;
+    final padR = asset.kind == _StudioAssetKind.westMittenButte ? 14.0 : 5.4;
     mesh.addFrustum(
       0,
       -0.45,
@@ -619,8 +640,23 @@ class _StudioPainter extends CustomPainter {
         );
       case _StudioAssetKind.saguaroCluster:
         DesertFloraAndRocks.addSaguaro(mesh, const Vec3(-0.6, 0, 0), 1.2, 0.3, lighting, shadowCol);
-        DesertFloraAndRocks.addSandstoneRock(mesh, const Vec3(1.1, 0, 0.4), 1.0, 0.7, 0.5);
-        DesertFloraAndRocks.addDesertBush(mesh, const Vec3(0.4, 0, -0.9), 0.65);
+        DesertFloraAndRocks.addSandstoneRock(
+          mesh,
+          const Vec3(1.1, 0, 0.4),
+          1.0,
+          0.7,
+          0.5,
+          lighting: lighting,
+          shadowCol: shadowCol,
+          groundY: 0,
+        );
+        DesertFloraAndRocks.addDesertBush(
+          mesh,
+          const Vec3(0.4, 0, -0.9),
+          0.65,
+          lighting: lighting,
+          shadowCol: shadowCol,
+        );
     }
 
     SceneRenderer3D.paintMesh(canvas, size, camera, lighting, mesh);

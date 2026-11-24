@@ -1,15 +1,16 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 
 import '../../models/game_models.dart';
 import '../../systems/game_controller.dart';
 import '../../theme/desert_palette.dart';
 import '../formatters.dart';
 import '../game_hud_widgets.dart';
+import '../game_icons.dart';
 
 enum ActiveGameTray { none, build, upgrade }
 
-/// Slim horizontal wooden game card deck that docks unobtrusively at the bottom
-/// so the 3D desert stays completely visible while building or upgrading.
+/// Slim horizontal wooden game card deck featuring live miniature 3D isometric previews
+/// of each landmark & prop so the player sees exactly what they are constructing!
 class GameActionTray extends StatelessWidget {
   const GameActionTray({
     super.key,
@@ -23,11 +24,11 @@ class GameActionTray extends StatelessWidget {
   final VoidCallback onClose;
 
   static const _decoCatalog = [
-    (DecorationKind.saguaroCluster, 'Cactus', 35.0, Icons.park_rounded),
-    (DecorationKind.picnicSet, 'Picnic', 55.0, Icons.deck_rounded),
-    (DecorationKind.woodenSignpost, 'Signpost', 45.0, Icons.signpost_rounded),
-    (DecorationKind.desertLamp, 'Lantern', 75.0, Icons.light_mode_rounded),
-    (DecorationKind.campfireRing, 'Campfire', 95.0, Icons.local_fire_department_rounded),
+    (DecorationKind.saguaroCluster, 'Cactus', 35.0),
+    (DecorationKind.picnicSet, 'Picnic', 55.0),
+    (DecorationKind.woodenSignpost, 'Signpost', 45.0),
+    (DecorationKind.desertLamp, 'Lantern', 75.0),
+    (DecorationKind.campfireRing, 'Campfire', 95.0),
   ];
 
   @override
@@ -48,35 +49,34 @@ class GameActionTray extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(
+                GameIcon(
                   mode == ActiveGameTray.build
-                      ? Icons.handyman_rounded
-                      : Icons.arrow_circle_up_rounded,
+                      ? GameIconKind.hammer
+                      : GameIconKind.upgradeArrow,
                   size: 16,
                   color: GameHudColors.woodFrame,
                 ),
                 const SizedBox(width: 6),
                 Text(
                   mode == ActiveGameTray.build ? 'BUILD' : 'UPGRADE',
-                  style: const TextStyle(
+                  style: DesertTypography.display(
+                    size: 12,
                     color: GameHudColors.ink,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 12.5,
-                    letterSpacing: 1.0,
+                    letterSpacing: 0.9,
                   ),
                 ),
                 const Spacer(),
                 GestureDetector(
                   onTap: onClose,
                   child: Container(
-                    padding: const EdgeInsets.all(3),
+                    padding: const EdgeInsets.all(4),
                     decoration: BoxDecoration(
                       color: GameHudColors.woodFrame.withValues(alpha: 0.14),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: const Icon(
-                      Icons.keyboard_arrow_down_rounded,
-                      size: 18,
+                    child: const GameIcon(
+                      GameIconKind.chevronDown,
+                      size: 16,
                       color: GameHudColors.ink,
                     ),
                   ),
@@ -85,7 +85,7 @@ class GameActionTray extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             SizedBox(
-              height: 102,
+              height: 118,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: cards.length,
@@ -102,13 +102,21 @@ class GameActionTray extends StatelessWidget {
   List<Widget> _buildDeckCards() {
     final items = <Widget>[];
 
-    // 1. Next Parking Tier card (always first if not maxed!)
     final nextPark = controller.nextParkingTier;
     if (nextPark != null) {
       items.add(
         _GameDeckCard(
-          icon: Icons.local_parking_rounded,
-          accent: GameHudColors.greenTop,
+          preview: Container(
+            width: 44,
+            height: 32,
+            decoration: BoxDecoration(
+              color: GameHudColors.greenTop.withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Center(
+              child: GameIcon(GameIconKind.parking, size: 22, color: GameHudColors.greenBase),
+            ),
+          ),
           title: nextPark.name,
           subtitle: '${nextPark.spaces} spaces',
           costText: formatCash(nextPark.cost),
@@ -118,13 +126,11 @@ class GameActionTray extends StatelessWidget {
       );
     }
 
-    // 2. Unlocked open construction plots
     for (final plot in controller.visiblePlots.where((p) => !p.isBuilt)) {
       final data = kBusinessCatalog[plot.businessType]!;
       items.add(
         _GameDeckCard(
-          icon: data.icon,
-          accent: data.accentColor,
+          preview: Mini3DAssetPreview(businessType: plot.businessType, level: 2),
           title: _shortTitle(data.name),
           subtitle: '+${formatCash(data.baseIncomePerMin)}/m',
           costText: formatCash(data.purchaseCost),
@@ -134,15 +140,13 @@ class GameActionTray extends StatelessWidget {
       );
     }
 
-    // 3. Desert decorations
     if (controller.canAddMoreDecorations) {
-      for (final (kind, name, cost, icon) in _decoCatalog) {
+      for (final (kind, name, cost) in _decoCatalog) {
         items.add(
           _GameDeckCard(
-            icon: icon,
-            accent: DesertPalette.wood,
+            preview: Mini3DAssetPreview(decorationKind: kind),
             title: name,
-            subtitle: 'Prop',
+            subtitle: '+4% Tips',
             costText: formatCash(cost),
             canAfford: controller.cash >= cost,
             onTap: () => controller.placeDecoration(kind, name, cost),
@@ -157,12 +161,20 @@ class GameActionTray extends StatelessWidget {
   List<Widget> _upgradeDeckCards() {
     final items = <Widget>[];
 
-    // 1. Tap / Counter power upgrade
     final tapCost = controller.tapUpgradeCost;
     items.add(
       _GameDeckCard(
-        icon: Icons.touch_app_rounded,
-        accent: GameHudColors.goldBase,
+        preview: Container(
+          width: 44,
+          height: 32,
+          decoration: BoxDecoration(
+            color: GameHudColors.goldTop.withValues(alpha: 0.24),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Center(
+            child: GameIcon(GameIconKind.tapHand, size: 22, color: GameHudColors.woodFrame),
+          ),
+        ),
         title: 'Tap Power',
         subtitle: 'Lv ${controller.tapUpgradeLevel} → +\$5',
         costText: formatCash(tapCost),
@@ -172,15 +184,14 @@ class GameActionTray extends StatelessWidget {
       ),
     );
 
-    // 2. Every built business upgrade
     for (final plot in controller.plots.where((p) => p.isBuilt)) {
       final data = kBusinessCatalog[plot.businessType]!;
       final isMax = plot.level >= data.maxLevel;
       final cost = data.upgradeCostForLevel(plot.level);
+      final previewLv = isMax ? plot.level : (plot.level + 1);
       items.add(
         _GameDeckCard(
-          icon: data.icon,
-          accent: data.accentColor,
+          preview: Mini3DAssetPreview(businessType: plot.businessType, level: previewLv),
           title: _shortTitle(data.name),
           subtitle: isMax ? 'MAX LV' : 'Lv ${plot.level} → ${plot.level + 1}',
           costText: isMax ? 'MAX' : formatCash(cost),
@@ -202,8 +213,7 @@ class GameActionTray extends StatelessWidget {
 
 class _GameDeckCard extends StatelessWidget {
   const _GameDeckCard({
-    required this.icon,
-    required this.accent,
+    required this.preview,
     required this.title,
     required this.subtitle,
     required this.costText,
@@ -212,8 +222,7 @@ class _GameDeckCard extends StatelessWidget {
     this.isUpgrade = false,
   });
 
-  final IconData icon;
-  final Color accent;
+  final Widget preview;
   final String title;
   final String subtitle;
   final String costText;
@@ -224,44 +233,40 @@ class _GameDeckCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 108,
-      padding: const EdgeInsets.fromLTRB(7, 7, 7, 6),
+      width: 118,
+      padding: const EdgeInsets.fromLTRB(7, 6, 7, 6),
       decoration: BoxDecoration(
         color: GameHudColors.parchmentDark,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: canAfford ? GameHudColors.woodFrame : GameHudColors.woodRim.withValues(alpha: 0.45),
+          color: canAfford
+              ? GameHudColors.woodFrame
+              : GameHudColors.woodRim.withValues(alpha: 0.45),
           width: 1.8,
         ),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 15, color: accent),
-              const SizedBox(width: 4),
-              Flexible(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    color: GameHudColors.ink,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 11.2,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
+          preview,
+          Text(
+            title,
+            style: DesertTypography.ui(
+              size: 11.2,
+              weight: FontWeight.w700,
+              color: GameHudColors.ink,
+              height: 1.05,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
           Text(
             subtitle,
-            style: const TextStyle(
+            style: DesertTypography.ui(
+              size: 10.0,
+              weight: FontWeight.w600,
               color: GameHudColors.inkMuted,
-              fontWeight: FontWeight.w700,
-              fontSize: 10.2,
+              height: 1.05,
             ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -275,14 +280,13 @@ class _GameDeckCard extends StatelessWidget {
               baseColor: isUpgrade ? GameHudColors.terraBase : GameHudColors.greenBase,
               radius: 10,
               bevelDepth: 2.5,
-              padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 6),
+              padding: const EdgeInsets.symmetric(vertical: 4.5, horizontal: 6),
               child: Center(
                 child: Text(
                   costText,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 11.5,
+                  style: DesertTypography.display(
+                    size: 10.8,
+                    color: const Color(0xFFFFFFFF),
                   ),
                 ),
               ),

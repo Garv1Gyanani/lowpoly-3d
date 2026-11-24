@@ -2,10 +2,11 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import 'package:flutter/material.dart';
+import 'package:flutter/widgets.dart';
 
 import '../models/game_models.dart';
 import '../systems/game_controller.dart';
+import '../theme/desert_palette.dart';
 import '../world/building_models.dart';
 import '../world/entity_models.dart';
 import '../world/environment_builder.dart';
@@ -14,7 +15,7 @@ import 'lighting.dart';
 import 'mesh_builder.dart';
 import 'vec3.dart';
 
-/// Projected drawable face ready for back-to-front painter sorting.
+/// Projected drawable face ready for back-to-front painter sorting and GPU triangle batching.
 class _RenderPoly {
   _RenderPoly({
     required this.points,
@@ -35,10 +36,31 @@ class _RenderPoly {
   final Color? outlineColor;
 }
 
-/// Shared pure-Dart 3D rendering pipeline used by both the main Desert Outpost
-/// diorama and the standalone 3D Object Studio inspector.
+/// High-throughput pure-Dart 3D rendering pipeline:
+/// - Precomputes `CameraFrame` once per frame
+/// - Clips foreground polygons cleanly against the near plane
+/// - Submits all sorted low-poly faces in a SINGLE `Canvas.drawVertices` hardware batch
+/// - Caches static world geometry and `TextPainter` layouts to eliminate GC spikes
 class SceneRenderer3D {
   const SceneRenderer3D._();
+
+  static Float32List _posBuffer = Float32List(16384);
+  static Int32List _colBuffer = Int32List(8192);
+  static final Paint _batchPaint = Paint()..isAntiAlias = true;
+  static final Map<int, TextPainter> _signLayoutCache = <int, TextPainter>{};
+  static final Map<int, TextPainter> _popupLayoutCache = <int, TextPainter>{};
+
+  static void _ensureVertexCapacity(int vertexCount) {
+    final neededFloats = vertexCount * 2;
+    if (_posBuffer.length < neededFloats) {
+      int nextLen = _posBuffer.length;
+      while (nextLen < neededFloats) {
+        nextLen *= 2;
+      }
+      _posBuffer = Float32List(nextLen);
+      _colBuffer = Int32List(nextLen ~/ 2);
+    }
+  }
 
   static void paintSkyDome(
     Canvas canvas,
@@ -47,15 +69,15 @@ class SceneRenderer3D {
     DesertLighting lighting,
     double animTime,
   ) {
-    final hY = camera.horizonScreenY(size).clamp(size.height * 0.05, size.height * 0.55);
+    final hY = camera.horizonScreenY(size).clamp(size.height * 0.05, size.height * 0.58);
 
-    const dayTop = Color(0xFF6F97CE);
-    const dayMid = Color(0xFFAAC2DF);
-    const dayHorizon = Color(0xFFF6C8A2);
+    const dayTop = Color(0xFF6693C9);
+    const dayMid = Color(0xFFA8C4DF);
+    const dayHorizon = Color(0xFFF7CCA6);
 
-    const sunsetTop = Color(0xFF4F4670);
-    const sunsetMid = Color(0xFFC56B69);
-    const sunsetHorizon = Color(0xFFFFAE68);
+    const sunsetTop = Color(0xFF4B426E);
+    const sunsetMid = Color(0xFFC86A6A);
+    const sunsetHorizon = Color(0xFFFFAF68);
 
     const nightTop = Color(0xFF0A1426);
     const nightMid = Color(0xFF162946);
@@ -75,20 +97,20 @@ class SceneRenderer3D {
       Paint()
         ..shader = ui.Gradient.linear(
           Offset.zero,
-          Offset(0, hY + 60),
+          Offset(0, hY + 68),
           [top, mid, bot],
-          const [0.0, 0.55, 1.0],
+          const [0.0, 0.54, 1.0],
         ),
     );
 
     if (lighting.nightFactor > 0.14) {
       final starAlpha = ((lighting.nightFactor - 0.14) / 0.86).clamp(0.0, 1.0);
       final starPaint = Paint()..style = PaintingStyle.fill;
-      for (int i = 0; i < 58; i++) {
+      for (int i = 0; i < 64; i++) {
         final fx = ((i * 73.13 + 17.0) % 100.0) / 100.0;
         final fy = ((i * 39.71 + 7.0) % 100.0) / 100.0;
         final twinkle = 0.5 + 0.5 * math.sin(animTime * 2.2 + i * 1.9);
-        starPaint.color = Colors.white.withValues(alpha: starAlpha * twinkle * 0.88);
+        starPaint.color = const Color(0xFFFFFFFF).withValues(alpha: starAlpha * twinkle * 0.88);
         canvas.drawCircle(
           Offset(fx * size.width, fy * hY * 0.92),
           (i % 5 == 0) ? 1.65 : 1.05,
@@ -105,24 +127,24 @@ class SceneRenderer3D {
     if (lighting.nightFactor < 0.78) {
       final vis = (1.0 - lighting.nightFactor).clamp(0.0, 1.0);
       final sunCol = Color.lerp(
-        const Color(0xFFFFF4D2),
+        const Color(0xFFFFF5D6),
         const Color(0xFFFF9650),
         lighting.sunsetFactor,
       )!;
       canvas.drawCircle(
         Offset(sunX, sunY),
-        70,
+        84,
         Paint()
           ..shader = ui.Gradient.radial(
             Offset(sunX, sunY),
-            70,
-            [sunCol.withValues(alpha: 0.36 * vis), sunCol.withValues(alpha: 0.0)],
+            84,
+            [sunCol.withValues(alpha: 0.38 * vis), sunCol.withValues(alpha: 0.0)],
           ),
       );
       canvas.drawCircle(
         Offset(sunX, sunY),
-        14,
-        Paint()..color = sunCol.withValues(alpha: 0.92 * vis),
+        15,
+        Paint()..color = sunCol.withValues(alpha: 0.94 * vis),
       );
     }
 
@@ -131,11 +153,11 @@ class SceneRenderer3D {
       final moonPos = Offset(size.width * 0.68, math.max(58.0, hY * 0.36));
       canvas.drawCircle(
         moonPos,
-        42,
+        44,
         Paint()
           ..shader = ui.Gradient.radial(
             moonPos,
-            42,
+            44,
             [
               const Color(0xFFCDE2FF).withValues(alpha: 0.32 * moonVis),
               const Color(0xFFCDE2FF).withValues(alpha: 0.0),
@@ -148,6 +170,24 @@ class SceneRenderer3D {
         Paint()..color = const Color(0xFFEAF3FF).withValues(alpha: 0.92 * moonVis),
       );
     }
+
+    // Subtle soaring red-tailed desert hawk silhouette circling near Monument Valley
+    if (lighting.nightFactor < 0.65) {
+      final hawkAlpha = (1.0 - lighting.nightFactor * 1.4).clamp(0.0, 0.55);
+      final hx = size.width * (0.34 + math.sin(animTime * 0.16) * 0.14);
+      final hy = hY * (0.42 + math.cos(animTime * 0.23) * 0.06);
+      final flap = math.sin(animTime * 2.6) * 2.2;
+      final wingPaint = Paint()
+        ..color = const Color(0xFF4A312C).withValues(alpha: hawkAlpha)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.6
+        ..strokeCap = StrokeCap.round;
+      final wingPath = Path()
+        ..moveTo(hx - 7.5, hy - 1.5 - flap)
+        ..quadraticBezierTo(hx - 3.2, hy - 3.6, hx, hy)
+        ..quadraticBezierTo(hx + 3.2, hy - 3.6, hx + 7.5, hy - 1.5 - flap);
+      canvas.drawPath(wingPath, wingPaint);
+    }
   }
 
   static void paintMesh(
@@ -157,63 +197,64 @@ class SceneRenderer3D {
     DesertLighting lighting,
     MeshBuilder mesh,
   ) {
-    final eye = camera.eye;
+    final frame = camera.createFrame(size);
+    final eye = frame.eye;
     final renderList = <_RenderPoly>[];
 
     for (final poly in mesh.polys) {
       if (!poly.doubleSided && poly.layer == RenderLayer.world) {
-        final toEye = eye - poly.centroid;
-        if (poly.normal.dot(toEye) <= 0.0) {
+        final dx = eye.x - poly.centroid.x;
+        final dy = eye.y - poly.centroid.y;
+        final dz = eye.z - poly.centroid.z;
+        if (poly.normal.x * dx + poly.normal.y * dy + poly.normal.z * dz <= 0.0) {
           continue;
         }
       }
 
-      final pts = <Offset>[];
-      double sumDepth = 0.0;
+      final pts = _projectAndClipPoly(poly.vertices, frame);
+      if (pts == null || pts.$1.length < 3) continue;
+
+      final screenPts = pts.$1;
+      final avgDepth = pts.$2;
+
       double minX = double.infinity;
       double maxX = double.negativeInfinity;
       double minY = double.infinity;
       double maxY = double.negativeInfinity;
-      bool valid = true;
-
-      for (final v in poly.vertices) {
-        final p = camera.project(v, size);
-        if (!p.inFront) {
-          valid = false;
-          break;
-        }
-        pts.add(p.offset);
-        sumDepth += p.depth;
-        if (p.offset.dx < minX) minX = p.offset.dx;
-        if (p.offset.dx > maxX) maxX = p.offset.dx;
-        if (p.offset.dy < minY) minY = p.offset.dy;
-        if (p.offset.dy > maxY) maxY = p.offset.dy;
+      for (final p in screenPts) {
+        if (p.dx < minX) minX = p.dx;
+        if (p.dx > maxX) maxX = p.dx;
+        if (p.dy < minY) minY = p.dy;
+        if (p.dy > maxY) maxY = p.dy;
       }
-
-      if (!valid) continue;
-      if (maxX < -60 || minX > size.width + 60 || maxY < -60 || minY > size.height + 60) {
+      if (maxX < -80 || minX > size.width + 80 || maxY < -80 || minY > size.height + 80) {
         continue;
       }
 
-      final localDepth = (sumDepth / pts.length) + poly.depthBias;
+      final localDepth = avgDepth + poly.depthBias;
       final groupDepth = poly.sortGroupAnchor != null
-          ? camera.project(poly.sortGroupAnchor!, size).depth
+          ? frame.project(poly.sortGroupAnchor!).depth
           : localDepth;
 
-      final Color shaded = poly.unlit
-          ? poly.color
-          : lighting.shadeFace(
-              baseColor: poly.color,
-              normal: poly.normal,
-              emissiveColor: poly.emissiveColor,
-              emissiveStrength: poly.emissiveStrength,
-              emissiveNightOnly: poly.emissiveNightOnly,
-              distanceFade: poly.distanceFade,
-            );
+      final Color shaded;
+      if (poly.unlit) {
+        shaded = poly.color;
+      } else if (poly.isCloud) {
+        shaded = lighting.shadeCloudFace(poly.normal);
+      } else {
+        shaded = lighting.shadeFace(
+          baseColor: poly.color,
+          normal: poly.normal,
+          emissiveColor: poly.emissiveColor,
+          emissiveStrength: poly.emissiveStrength,
+          emissiveNightOnly: poly.emissiveNightOnly,
+          distanceFade: poly.distanceFade,
+        );
+      }
 
       renderList.add(
         _RenderPoly(
-          points: pts,
+          points: screenPts,
           layerIndex: poly.layer.index,
           groupDepth: groupDepth,
           subOrder: poly.subOrder,
@@ -224,7 +265,7 @@ class SceneRenderer3D {
       );
     }
 
-    // Sort: layer ASC -> groupDepth DESC (furthest object first) -> subOrder ASC -> localDepth DESC!
+    // Sort: layer ASC -> groupDepth DESC -> subOrder ASC -> localDepth DESC
     renderList.sort((a, b) {
       final layerCmp = a.layerIndex.compareTo(b.layerIndex);
       if (layerCmp != 0) return layerCmp;
@@ -235,100 +276,202 @@ class SceneRenderer3D {
       return b.localDepth.compareTo(a.localDepth);
     });
 
-    final fillPaint = Paint()..style = PaintingStyle.fill;
-    final seamPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.8
-      ..strokeJoin = StrokeJoin.round;
-    final outlinePaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.6
-      ..strokeJoin = StrokeJoin.round;
-
+    // Count total triangle vertices for single-pass GPU Vertices batch
+    int totalTriVerts = 0;
     for (final rp in renderList) {
-      final path = Path()..addPolygon(rp.points, true);
-      fillPaint.color = rp.fillColor;
-      canvas.drawPath(path, fillPaint);
+      totalTriVerts += (rp.points.length - 2) * 3;
+    }
 
-      if (rp.layerIndex != RenderLayer.shadow.index && rp.fillColor.a > 0.95) {
-        seamPaint.color = rp.fillColor;
-        canvas.drawPath(path, seamPaint);
+    if (totalTriVerts >= 3) {
+      _ensureVertexCapacity(totalTriVerts);
+      int pIdx = 0;
+      int cIdx = 0;
+      final outlined = <_RenderPoly>[];
+
+      for (final rp in renderList) {
+        final pts = rp.points;
+        final argb = rp.fillColor.toARGB32();
+        final p0 = pts[0];
+        for (int i = 1; i < pts.length - 1; i++) {
+          final p1 = pts[i];
+          final p2 = pts[i + 1];
+
+          _posBuffer[pIdx++] = p0.dx;
+          _posBuffer[pIdx++] = p0.dy;
+          _posBuffer[pIdx++] = p1.dx;
+          _posBuffer[pIdx++] = p1.dy;
+          _posBuffer[pIdx++] = p2.dx;
+          _posBuffer[pIdx++] = p2.dy;
+
+          _colBuffer[cIdx++] = argb;
+          _colBuffer[cIdx++] = argb;
+          _colBuffer[cIdx++] = argb;
+        }
+        if (rp.outlineColor != null) {
+          outlined.add(rp);
+        }
       }
 
-      if (rp.outlineColor != null) {
-        outlinePaint.color = rp.outlineColor!;
-        canvas.drawPath(path, outlinePaint);
+      final vertices = ui.Vertices.raw(
+        ui.VertexMode.triangles,
+        Float32List.sublistView(_posBuffer, 0, pIdx),
+        colors: Int32List.sublistView(_colBuffer, 0, cIdx),
+      );
+      canvas.drawVertices(vertices, BlendMode.dst, _batchPaint);
+      vertices.dispose();
+
+      if (outlined.isNotEmpty) {
+        final outlinePaint = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.6
+          ..strokeJoin = StrokeJoin.round;
+        for (final rp in outlined) {
+          outlinePaint.color = rp.outlineColor!;
+          canvas.drawPath(Path()..addPolygon(rp.points, true), outlinePaint);
+        }
       }
     }
 
-    final linePaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-    for (final line in mesh.lines) {
-      final a = camera.project(line.start, size);
-      final b = camera.project(line.end, size);
-      if (!a.inFront || !b.inFront) continue;
-      linePaint
-        ..color = line.color
-        ..strokeWidth = line.width;
-      canvas.drawLine(a.offset, b.offset, linePaint);
+    if (mesh.lines.isNotEmpty) {
+      final linePaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round;
+      for (final line in mesh.lines) {
+        final a = frame.project(line.start);
+        final b = frame.project(line.end);
+        if (!a.inFront || !b.inFront) continue;
+        linePaint
+          ..color = line.color
+          ..strokeWidth = line.width;
+        canvas.drawLine(a.offset, b.offset, linePaint);
+      }
     }
 
-    _paintPerspectiveSigns(canvas, size, camera, lighting, mesh.signs);
-    _paintGlowLights(canvas, size, camera, lighting, mesh.glows);
+    _paintPerspectiveSigns(canvas, frame, lighting, mesh.signs);
+    _paintGlowLights(canvas, frame, lighting, mesh.glows);
+  }
+
+  /// Fast projection with near-plane Sutherland-Hodgman polygon clipping so large
+  /// foreground road & terrain quads never vanish abruptly when zooming in.
+  static (List<Offset>, double)? _projectAndClipPoly(List<Vec3> worldVerts, CameraFrame frame) {
+    bool allInFront = true;
+    bool anyInFront = false;
+
+    for (final v in worldVerts) {
+      final cz = (v.x - frame.eye.x) * frame.forward.x +
+          (v.y - frame.eye.y) * frame.forward.y +
+          (v.z - frame.eye.z) * frame.forward.z;
+      if (cz <= CameraFrame.nearClipZ) {
+        allInFront = false;
+      } else {
+        anyInFront = true;
+      }
+    }
+
+    if (!anyInFront) return null;
+
+    if (allInFront) {
+      final pts = <Offset>[];
+      double sumDepth = 0.0;
+      for (final v in worldVerts) {
+        final p = frame.project(v);
+        pts.add(p.offset);
+        sumDepth += p.depth;
+      }
+      return (pts, sumDepth / pts.length);
+    }
+
+    // Clip in camera space against z = nearClipZ
+    final camVerts = worldVerts.map(frame.toCameraSpace).toList(growable: false);
+    final clipped = <Vec3>[];
+    const nearZ = CameraFrame.nearClipZ;
+
+    for (int i = 0; i < camVerts.length; i++) {
+      final curr = camVerts[i];
+      final prev = camVerts[(i + camVerts.length - 1) % camVerts.length];
+      final currIn = curr.z >= nearZ;
+      final prevIn = prev.z >= nearZ;
+
+      if (currIn != prevIn) {
+        final t = (nearZ - prev.z) / (curr.z - prev.z);
+        clipped.add(prev.lerp(curr, t));
+      }
+      if (currIn) {
+        clipped.add(curr);
+      }
+    }
+
+    if (clipped.length < 3) return null;
+    final pts = <Offset>[];
+    double sumDepth = 0.0;
+    for (final c in clipped) {
+      final invZ = frame.focalLength / c.z;
+      pts.add(Offset(frame.halfWidth + c.x * invZ, frame.halfHeight - c.y * invZ));
+      sumDepth += c.z;
+    }
+    return (pts, sumDepth / pts.length);
   }
 
   static void _paintPerspectiveSigns(
     Canvas canvas,
-    Size size,
-    Camera3D camera,
+    CameraFrame frame,
     DesertLighting lighting,
     List<SignText3D> signs,
   ) {
     final nightStrength = (lighting.nightFactor * 0.95 + lighting.sunsetFactor * 0.4).clamp(0.0, 1.0);
+    final nightBucket = (nightStrength * 12).round();
 
     for (final sign in signs) {
-      final tl = camera.project(sign.topLeft, size);
-      final tr = camera.project(sign.topRight, size);
-      final bl = camera.project(sign.bottomLeft, size);
+      final tl = frame.project(sign.topLeft);
+      final tr = frame.project(sign.topRight);
+      final bl = frame.project(sign.bottomLeft);
       if (!tl.inFront || !tr.inFront || !bl.inFront) continue;
 
       final u = tr.offset - tl.offset;
       final v = bl.offset - tl.offset;
-      // Backface-cull sign text when orbiting behind a signboard in the 3D Studio!
       final cross2D = u.dx * v.dy - u.dy * v.dx;
       if (cross2D <= 0) continue;
 
       final signW = u.distance;
       final signH = v.distance;
-      if (signW < 12 || signH < 5) continue;
+      if (signW < 10 || signH < 4) continue;
 
+      final effectiveStrength = nightBucket / 12.0;
       final textCol = (sign.nightGlow && sign.glowColor != null)
-          ? Color.lerp(sign.color, sign.glowColor!, nightStrength * 0.88)!
+          ? Color.lerp(sign.color, sign.glowColor!, effectiveStrength * 0.88)!
           : sign.color;
 
-      final tp = TextPainter(
-        text: TextSpan(
-          text: sign.text,
-          style: TextStyle(
-            color: textCol,
-            fontSize: 28.0,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 1.0,
-            height: 1.0,
-            shadows: sign.nightGlow && nightStrength > 0.25 && sign.glowColor != null
-                ? [
-                    Shadow(
-                      color: sign.glowColor!.withValues(alpha: 0.85 * nightStrength),
-                      blurRadius: 8,
-                    ),
-                  ]
-                : null,
+      final cacheKey = Object.hash(
+        sign.text,
+        textCol.toARGB32(),
+        sign.nightGlow ? nightBucket : 0,
+        sign.glowColor?.toARGB32() ?? 0,
+      );
+
+      final tp = _signLayoutCache.putIfAbsent(cacheKey, () {
+        if (_signLayoutCache.length > 240) _signLayoutCache.clear();
+        return TextPainter(
+          text: TextSpan(
+            text: sign.text,
+            style: DesertTypography.display(
+              size: 26.0,
+              color: textCol,
+              letterSpacing: 0.9,
+              height: 1.02,
+              shadows: sign.nightGlow && effectiveStrength > 0.25 && sign.glowColor != null
+                  ? [
+                      Shadow(
+                        color: sign.glowColor!.withValues(alpha: 0.85 * effectiveStrength),
+                        blurRadius: 8,
+                      ),
+                    ]
+                  : null,
+            ),
           ),
-        ),
-        textAlign: TextAlign.center,
-        textDirection: TextDirection.ltr,
-      )..layout();
+          textAlign: TextAlign.center,
+          textDirection: TextDirection.ltr,
+        )..layout();
+      });
 
       if (tp.width < 1 || tp.height < 1) continue;
 
@@ -365,8 +508,7 @@ class SceneRenderer3D {
 
   static void _paintGlowLights(
     Canvas canvas,
-    Size size,
-    Camera3D camera,
+    CameraFrame frame,
     DesertLighting lighting,
     List<GlowLight3D> glows,
   ) {
@@ -375,30 +517,61 @@ class SceneRenderer3D {
       final factor = g.nightOnly ? nightStrength : 1.0;
       if (factor <= 0.04) continue;
 
-      final p = camera.project(g.position, size);
+      final p = frame.project(g.position);
       if (!p.inFront) continue;
-      final r = (g.radius * (Camera3D.defaultDistance / p.depth)).clamp(10.0, 80.0);
+      final r = (g.radius * (Camera3D.defaultDistance / p.depth)).clamp(10.0, 82.0);
       final paint = Paint()
         ..shader = ui.Gradient.radial(
           p.offset,
           r,
           [
-            g.color.withValues(alpha: (0.44 * g.intensity * factor).clamp(0.0, 0.75)),
+            g.color.withValues(alpha: (0.44 * g.intensity * factor).clamp(0.0, 0.76)),
             g.color.withValues(alpha: 0.0),
           ],
         );
       canvas.drawCircle(p.offset, r, paint);
     }
   }
+
+  static TextPainter layoutPopupText(String text, Color baseColor, int alphaBucket) {
+    final alpha = (alphaBucket / 20.0).clamp(0.0, 1.0);
+    final key = Object.hash(text, baseColor.toARGB32(), alphaBucket);
+    return _popupLayoutCache.putIfAbsent(key, () {
+      if (_popupLayoutCache.length > 320) _popupLayoutCache.clear();
+      return TextPainter(
+        text: TextSpan(
+          text: text,
+          style: DesertTypography.display(
+            size: 14.5,
+            color: baseColor.withValues(alpha: alpha),
+            letterSpacing: 0.5,
+            shadows: [
+              Shadow(
+                color: const Color(0xFF23120B).withValues(alpha: 0.72 * alpha),
+                blurRadius: 4,
+                offset: const Offset(0, 1.8),
+              ),
+            ],
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+    });
+  }
 }
 
-/// Main Desert Outpost CustomPainter assembling the full unified 3D world.
+/// Main Desert Outpost CustomPainter with multi-tier static geometry caching.
 class DesertOutpostPainter extends CustomPainter {
   DesertOutpostPainter({
     required this.controller,
-  }) : super(repaint: controller);
+  }) : super(repaint: controller.renderListenable);
 
   final GameController controller;
+
+  final MeshBuilder _staticWorldCache = MeshBuilder();
+  int _cachedWorldSignature = -1;
+
+  final MeshBuilder _frameMesh = MeshBuilder();
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -408,9 +581,50 @@ class DesertOutpostPainter extends CustomPainter {
 
     SceneRenderer3D.paintSkyDome(canvas, size, camera, lighting, animTime);
 
-    final mesh = MeshBuilder();
-    EnvironmentBuilder.build(
-      mesh,
+    // Quantize shadow movement so static world shadows refresh smoothly ~once/sec
+    // while terrain, mesas, highway, rocks & un-animated buildings stay cached!
+    final shadowBucket = (lighting.timeOfDay * 96).floor();
+    final staticSig = Object.hash(
+      controller.parkingTier,
+      controller.builtCount,
+      controller.decorations.length,
+      controller.staticBuildingsSignature,
+      shadowBucket,
+    );
+
+    if (staticSig != _cachedWorldSignature) {
+      _cachedWorldSignature = staticSig;
+      _staticWorldCache.clear();
+      EnvironmentBuilder.buildStatic(
+        _staticWorldCache,
+        lighting,
+        parkingTier: controller.parkingTier,
+        builtCount: controller.builtCount,
+      );
+      for (final deco in controller.decorations) {
+        if (!EntityModels.isAnimatedDecoration(deco)) {
+          EntityModels.buildDecoration(_staticWorldCache, deco, lighting, 0.0);
+        }
+      }
+      for (final plot in controller.visiblePlots) {
+        if (BuildingModels.isStaticPlot(plot, isSelected: controller.selectedPlotId == plot.id)) {
+          BuildingModels.buildPlot(
+            _staticWorldCache,
+            plot,
+            lighting,
+            0.0,
+            isSelected: false,
+          );
+        }
+      }
+    }
+
+    _frameMesh.clear();
+    _frameMesh.appendFrom(_staticWorldCache);
+
+    // Dynamic ambient environment (clouds, swaying sagebrush, spinning windmill, tumbleweed)
+    EnvironmentBuilder.buildDynamic(
+      _frameMesh,
       lighting,
       animTime,
       parkingTier: controller.parkingTier,
@@ -418,47 +632,56 @@ class DesertOutpostPainter extends CustomPainter {
     );
 
     for (final deco in controller.decorations) {
-      EntityModels.buildDecoration(mesh, deco, lighting, animTime);
-    }
-    for (final plot in controller.visiblePlots) {
-      BuildingModels.buildPlot(
-        mesh,
-        plot,
-        lighting,
-        animTime,
-        isSelected: controller.selectedPlotId == plot.id,
-      );
-    }
-    for (final vehicle in controller.vehicles) {
-      EntityModels.buildVehicle(mesh, vehicle, lighting);
-    }
-    for (final visitor in controller.visitors) {
-      EntityModels.buildVisitor(mesh, visitor, lighting);
+      if (EntityModels.isAnimatedDecoration(deco)) {
+        EntityModels.buildDecoration(_frameMesh, deco, lighting, animTime);
+      }
     }
 
-    SceneRenderer3D.paintMesh(canvas, size, camera, lighting, mesh);
-    _paintParticles(canvas, size, camera, controller.particles);
-    _paintFloatingCash(canvas, size, camera, controller.floatingCash);
+    for (final plot in controller.visiblePlots) {
+      final selected = controller.selectedPlotId == plot.id;
+      if (!BuildingModels.isStaticPlot(plot, isSelected: selected)) {
+        BuildingModels.buildPlot(
+          _frameMesh,
+          plot,
+          lighting,
+          animTime,
+          isSelected: selected,
+        );
+      }
+    }
+
+    for (final vehicle in controller.vehicles) {
+      EntityModels.buildVehicle(_frameMesh, vehicle, lighting);
+    }
+    for (final visitor in controller.visitors) {
+      EntityModels.buildVisitor(_frameMesh, visitor, lighting);
+    }
+
+    SceneRenderer3D.paintMesh(canvas, size, camera, lighting, _frameMesh);
+
+    final frame = camera.createFrame(size);
+    _paintParticles(canvas, frame, controller.particles);
+    _paintFloatingCash(canvas, frame, controller.floatingCash);
   }
 
   void _paintParticles(
     Canvas canvas,
-    Size size,
-    Camera3D camera,
+    CameraFrame frame,
     List<Particle3D> particles,
   ) {
+    if (particles.isEmpty) return;
     final paint = Paint()..style = PaintingStyle.fill;
     for (final pt in particles) {
-      final p = camera.project(pt.position, size);
+      final p = frame.project(pt.position);
       if (!p.inFront) continue;
       final fade = (1.0 - pt.progress).clamp(0.0, 1.0);
-      paint.color = pt.color.withValues(alpha: fade * 0.92);
-      final distScale = (Camera3D.defaultDistance / p.depth).clamp(0.5, 1.8);
+      paint.color = pt.color.withValues(alpha: fade * 0.94);
+      final distScale = (Camera3D.defaultDistance / p.depth).clamp(0.55, 2.0);
       final r = pt.size * distScale * (pt.isCoin ? 1.0 : (0.65 + pt.progress * 0.85));
       if (pt.isCoin) {
         canvas.drawCircle(p.offset, r, paint);
-        paint.color = const Color(0xFFFFF4C2).withValues(alpha: fade);
-        canvas.drawCircle(p.offset, r * 0.45, paint);
+        paint.color = const Color(0xFFFFF7D6).withValues(alpha: fade);
+        canvas.drawCircle(p.offset, r * 0.46, paint);
       } else {
         final path = Path()
           ..moveTo(p.offset.dx, p.offset.dy - r)
@@ -473,35 +696,20 @@ class DesertOutpostPainter extends CustomPainter {
 
   void _paintFloatingCash(
     Canvas canvas,
-    Size size,
-    Camera3D camera,
+    CameraFrame frame,
     List<FloatingCash> popups,
   ) {
+    if (popups.isEmpty) return;
     for (final fc in popups) {
-      final riseY = fc.position.y + fc.progress * 2.2;
-      final p = camera.project(Vec3(fc.position.x, riseY, fc.position.z), size);
+      final riseY = fc.position.y + fc.progress * 2.35;
+      final driftX = fc.position.x + fc.driftX * fc.progress;
+      final p = frame.project(Vec3(driftX, riseY, fc.position.z));
       if (!p.inFront) continue;
       final alpha = (1.0 - math.pow(fc.progress, 2)).clamp(0.0, 1.0);
+      final alphaBucket = (alpha * 20).round();
+      if (alphaBucket <= 0) continue;
 
-      final tp = TextPainter(
-        text: TextSpan(
-          text: fc.text,
-          style: TextStyle(
-            color: fc.color.withValues(alpha: alpha),
-            fontSize: 15,
-            fontWeight: FontWeight.w900,
-            shadows: [
-              Shadow(
-                color: Colors.black.withValues(alpha: 0.45 * alpha),
-                blurRadius: 4,
-                offset: const Offset(0, 1.5),
-              ),
-            ],
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-
+      final tp = SceneRenderer3D.layoutPopupText(fc.text, fc.color, alphaBucket);
       tp.paint(canvas, Offset(p.offset.dx - tp.width * 0.5, p.offset.dy - tp.height * 0.5));
     }
   }

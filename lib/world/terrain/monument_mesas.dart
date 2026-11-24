@@ -1,15 +1,15 @@
 import 'dart:ui';
 
+import '../../engine/lighting.dart';
 import '../../engine/mesh_builder.dart';
 import '../../theme/desert_palette.dart';
 import 'desert_terrain.dart';
 
-/// True 3D sculpted Monument Valley mesas, Mitten Buttes, and red-rock outcrops
-/// anchored directly into the continuous 3D desert terrain.
+/// True 3D sculpted Monument Valley mesas, Mitten Buttes, and grounded red-rock outcrops.
 class MonumentMesas {
   const MonumentMesas._();
 
-  static void buildAll(MeshBuilder mesh) {
+  static void buildAll(MeshBuilder mesh, {DesertLighting? lighting}) {
     // 1. Hero Left West Mitten Butte (with twin flanking spires!)
     buildMittenButte(
       mesh,
@@ -20,6 +20,7 @@ class MonumentMesas {
       hasLeftButtress: true,
       hasRightThumb: true,
       seed: 1,
+      lighting: lighting,
     );
 
     // 2. Far-Left Distant Mesa Shoulder
@@ -55,6 +56,7 @@ class MonumentMesas {
       distanceFade: 0.28,
       hasLeftThumb: true,
       seed: 4,
+      lighting: lighting,
     );
 
     // 5. Hero Right Merrick Cathedral Butte
@@ -65,17 +67,17 @@ class MonumentMesas {
       scale: 1.12,
       distanceFade: 0.15,
       seed: 5,
+      lighting: lighting,
     );
 
-    // 6. Mid-ground flanking low red-rock outcrops
-    buildLowOutcrop(mesh, -21.0, -18.5, 4.2, 3.0, 2.8, 0.06, 6);
-    buildLowOutcrop(mesh, 20.5, -17.0, 4.4, 3.1, 3.1, 0.06, 7);
-    buildLowOutcrop(mesh, -25.0, -2.5, 3.6, 2.8, 2.4, 0.04, 8);
-    buildLowOutcrop(mesh, 24.0, -2.0, 3.8, 2.9, 2.6, 0.04, 9);
+    // 6. Mid-ground flanking low red-rock outcrops with grounded contact shadows!
+    buildLowOutcrop(mesh, -21.0, -18.5, 4.2, 3.0, 2.8, 0.06, 6, lighting);
+    buildLowOutcrop(mesh, 20.5, -17.0, 4.4, 3.1, 3.1, 0.06, 7, lighting);
+    buildLowOutcrop(mesh, -25.0, -2.5, 3.6, 2.8, 2.4, 0.04, 8, lighting);
+    buildLowOutcrop(mesh, 24.0, -2.0, 3.8, 2.9, 2.6, 0.04, 9, lighting);
   }
 
   /// Sculpted multi-tiered 3D red sandstone Mitten / Cathedral Butte.
-  /// Can also be rendered standalone in the 3D Object Studio at origin `(0, 0)`.
   static void buildMittenButte(
     MeshBuilder mesh, {
     required double cx,
@@ -87,16 +89,31 @@ class MonumentMesas {
     bool hasRightThumb = false,
     bool hasLeftThumb = false,
     double? overrideBaseY,
+    DesertLighting? lighting,
   }) {
-    final baseY = overrideBaseY ?? (DesertTerrain.heightAt(cx, cz) - 0.6);
+    final groundY = overrideBaseY ?? DesertTerrain.heightAt(cx, cz);
+    final baseY = groundY - 0.6;
     final s = scale;
+
+    if (lighting != null && overrideBaseY == null) {
+      mesh.addDiscShadow(
+        cx,
+        groundY,
+        cz,
+        10.6 * s,
+        8.0 * s,
+        12.0 * s,
+        lighting.shadowDirection,
+        lighting.shadowColor,
+        sides: 8,
+      );
+    }
 
     const talusCol = Color(0xFFB85B3C);
     const cliffMain = Color(0xFFBC5838);
     const cliffRib = Color(0xFFA24531);
     const capCol = Color(0xFFD67346);
 
-    // Broad sculpted 10-sided talus skirt
     mesh.addFrustum(
       cx,
       baseY,
@@ -114,7 +131,6 @@ class MonumentMesas {
       seed: seed,
     );
 
-    // Stepped talus shoulder
     mesh.addFrustum(
       cx,
       baseY + 4.5 * s,
@@ -132,7 +148,6 @@ class MonumentMesas {
       seed: seed + 10,
     );
 
-    // Main fluted vertical sandstone monolith with subtle geological strata bands
     mesh.addFrustum(
       cx,
       baseY + 6.2 * s,
@@ -149,7 +164,6 @@ class MonumentMesas {
       roughness: 0.15,
       seed: seed + 20,
     );
-    // Horizontal lighter red-ochre sandstone stratum band
     mesh.addFrustum(
       cx,
       baseY + 10.6 * s,
@@ -166,7 +180,6 @@ class MonumentMesas {
       roughness: 0.14,
       seed: seed + 22,
     );
-    // Upper cliff tier
     mesh.addFrustum(
       cx,
       baseY + 11.7 * s,
@@ -184,7 +197,6 @@ class MonumentMesas {
       seed: seed + 24,
     );
 
-    // Sculpted vertical cliff ribs for crisp Monument Valley fluting
     mesh.addFrustum(
       cx - 2.3 * s,
       baseY + 5.8 * s,
@@ -218,7 +230,6 @@ class MonumentMesas {
       seed: seed + 40,
     );
 
-    // Flat caprock crown
     mesh.addFrustum(
       cx,
       baseY + 15.3 * s,
@@ -352,11 +363,25 @@ class MonumentMesas {
     double h,
     double fade,
     int seed,
+    DesertLighting? lighting,
   ) {
-    final y = DesertTerrain.heightAt(cx, cz) - 0.35;
+    final groundY = DesertTerrain.heightAt(cx, cz);
+    if (lighting != null) {
+      mesh.addDiscShadow(
+        cx,
+        groundY,
+        cz,
+        rx * 0.94,
+        rz * 0.94,
+        h,
+        lighting.shadowDirection,
+        lighting.shadowColor,
+        sides: 6,
+      );
+    }
     mesh.addFrustum(
       cx,
-      y,
+      groundY - 0.35,
       cz,
       rx,
       rz,

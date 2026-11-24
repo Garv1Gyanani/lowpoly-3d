@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui';
 
+import '../theme/desert_palette.dart';
 import 'vec3.dart';
 
 /// Render layers ensuring the single continuous 3D terrain always lies underneath
@@ -8,9 +9,9 @@ import 'vec3.dart';
 enum RenderLayer {
   terrain, // 0: single continuous sculpted 3D low-poly desert terrain
   groundDecal, // 1: asphalt highway, parking apron, walkways, plot pads
-  shadow, // 2: soft projected ground shadows
-  world, // 3: ALL 3D objects — Monument Valley mesas, buildings, props, cars, visitors
-  skyCloud, // 4: reserved
+  shadow, // 2: contact ambient occlusion & projected ground shadows
+  world, // 3: ALL 3D objects — Monument Valley mesas, buildings, props, wires, cars, visitors
+  skyCloud, // 4: luminous 3D desert clouds
 }
 
 /// A single flat-shaded 3D low-poly face.
@@ -26,6 +27,7 @@ class Poly3D {
     this.depthBias = 0.0,
     this.doubleSided = false,
     this.unlit = false,
+    this.isCloud = false,
     this.distanceFade = 0.0,
     this.outlineColor,
     this.sortGroupAnchor,
@@ -39,18 +41,13 @@ class Poly3D {
   final double emissiveStrength;
   final bool emissiveNightOnly;
   final RenderLayer layer;
-
-  /// Small camera-distance adjustment (negative brings slightly closer to camera).
   final double depthBias;
   final bool doubleSided;
   final bool unlit;
+  final bool isCloud;
   final double distanceFade;
   final Color? outlineColor;
   final Vec3 centroid;
-
-  /// When set, all polygons sharing this anchor sort together against other world objects
-  /// using the anchor's camera depth, then internally by [subOrder] ASC and local depth DESC.
-  /// This completely eliminates z-fighting & part-popping on moving vehicles and characters!
   final Vec3? sortGroupAnchor;
   final int subOrder;
 
@@ -66,7 +63,7 @@ class Poly3D {
   }
 }
 
-/// A 3D line segment (telephone wires, handrails, ropes).
+/// A 3D line segment (fallback handrails / crisp accents).
 class Line3D {
   const Line3D({
     required this.start,
@@ -119,7 +116,7 @@ class SignText3D {
   final bool nightGlow;
 }
 
-/// Accumulates low-poly 3D faces, shadows, lines, glows, and 3D-aligned signs for a frame.
+/// Accumulates low-poly 3D faces, contact shadows, 3D wires, glows, and 3D-aligned signs.
 class MeshBuilder {
   final List<Poly3D> polys = <Poly3D>[];
   final List<Line3D> lines = <Line3D>[];
@@ -128,21 +125,50 @@ class MeshBuilder {
 
   Vec3 _origin = Vec3.zero;
   double _rotY = 0.0;
+  double _scaleXZ = 1.0;
+  double _scaleY = 1.0;
   Vec3? _sortGroupAnchor;
   int _subOrder = 0;
+
+  void clear() {
+    polys.clear();
+    lines.clear();
+    glows.clear();
+    signs.clear();
+  }
+
+  /// Appends prebuilt static geometry without copying vertex arrays.
+  void appendFrom(MeshBuilder other) {
+    polys.addAll(other.polys);
+    lines.addAll(other.lines);
+    glows.addAll(other.glows);
+    signs.addAll(other.signs);
+  }
 
   void withTransform(Vec3 origin, double rotY, void Function() build) {
     final prevOrigin = _origin;
     final prevRot = _rotY;
-    _origin = prevOrigin + origin.rotateY(prevRot);
+    final scaledLocal = Vec3(origin.x * _scaleXZ, origin.y * _scaleY, origin.z * _scaleXZ);
+    _origin = prevOrigin + scaledLocal.rotateY(prevRot);
     _rotY = prevRot + rotY;
     build();
     _origin = prevOrigin;
     _rotY = prevRot;
   }
 
+  /// Applies grounded squash-and-stretch scaling around the current origin (`y = 0` stays planted!).
+  void withScale(double scaleXZ, double scaleY, void Function() build) {
+    final prevXZ = _scaleXZ;
+    final prevY = _scaleY;
+    _scaleXZ = prevXZ * scaleXZ;
+    _scaleY = prevY * scaleY;
+    build();
+    _scaleXZ = prevXZ;
+    _scaleY = prevY;
+  }
+
   /// Groups all faces emitted inside [build] under a single world-space depth anchor
-  /// so moving/rotating entities NEVER pop or z-fight internally!
+  /// so moving/rotating entities NEVER pop or z-fight internally.
   void withSortGroup(Vec3 worldAnchor, void Function() build) {
     final prevAnchor = _sortGroupAnchor;
     final prevSub = _subOrder;
@@ -161,7 +187,11 @@ class MeshBuilder {
     _subOrder = prevSub;
   }
 
-  Vec3 _tx(Vec3 local) => _origin + local.rotateY(_rotY);
+  Vec3 _tx(Vec3 local) {
+    final scaled = Vec3(local.x * _scaleXZ, local.y * _scaleY, local.z * _scaleXZ);
+    return _origin + scaled.rotateY(_rotY);
+  }
+
   Vec3 _txNormal(Vec3 localN) => localN.rotateY(_rotY).normalized();
 
   /// Adds a quad face (vertices wound CCW when viewed from outside).
@@ -178,6 +208,7 @@ class MeshBuilder {
     double depthBias = 0.0,
     bool doubleSided = false,
     bool unlit = false,
+    bool isCloud = false,
     double distanceFade = 0.0,
     Color? outlineColor,
     int? subOrder,
@@ -199,6 +230,7 @@ class MeshBuilder {
         depthBias: depthBias,
         doubleSided: doubleSided,
         unlit: unlit,
+        isCloud: isCloud,
         distanceFade: distanceFade,
         outlineColor: outlineColor,
         sortGroupAnchor: layer == RenderLayer.world ? _sortGroupAnchor : null,
@@ -220,6 +252,7 @@ class MeshBuilder {
     double depthBias = 0.0,
     bool doubleSided = false,
     bool unlit = false,
+    bool isCloud = false,
     double distanceFade = 0.0,
     int? subOrder,
   }) {
@@ -239,6 +272,7 @@ class MeshBuilder {
         depthBias: depthBias,
         doubleSided: doubleSided,
         unlit: unlit,
+        isCloud: isCloud,
         distanceFade: distanceFade,
         sortGroupAnchor: layer == RenderLayer.world ? _sortGroupAnchor : null,
         subOrder: subOrder ?? _subOrder,
@@ -301,7 +335,8 @@ class MeshBuilder {
     );
   }
 
-  /// Adds a soft projected ground shadow polygon.
+  /// Adds a grounded two-stage shadow: a tight ambient-occlusion contact ring right under
+  /// the base plus a directional cast shadow so buildings & props look firmly planted!
   void addBoxShadow(
     double cx,
     double cz,
@@ -309,24 +344,137 @@ class MeshBuilder {
     double d,
     double height,
     Vec3 shadowDir,
-    Color shadowColor,
-  ) {
-    final hw = w * 0.52;
-    final hd = d * 0.52;
-    final ox = shadowDir.x * height * 0.38;
-    final oz = shadowDir.z * height * 0.38;
-
+    Color shadowColor, {
+    double groundY = 0.02,
+  }) {
+    // 1. Tight base ambient-occlusion contact pad directly beneath footprint
+    final chw = w * 0.53;
+    final chd = d * 0.53;
+    final contactAlpha = (shadowColor.a * 1.25).clamp(0.10, 0.42);
+    final contactCol = Color.from(
+      alpha: contactAlpha,
+      red: DesertPalette.shadowContact.r,
+      green: DesertPalette.shadowContact.g,
+      blue: DesertPalette.shadowContact.b,
+    );
     addGroundPoly(
       [
-        Vec3(cx - hw + ox, 0.02, cz - hd + oz),
-        Vec3(cx - hw + ox, 0.02, cz + hd + oz),
-        Vec3(cx + hw + ox, 0.02, cz + hd + oz),
-        Vec3(cx + hw + ox, 0.02, cz - hd + oz),
+        Vec3(cx - chw, groundY, cz - chd),
+        Vec3(cx - chw, groundY, cz + chd),
+        Vec3(cx + chw, groundY, cz + chd),
+        Vec3(cx + chw, groundY, cz - chd),
+      ],
+      contactCol,
+      layer: RenderLayer.shadow,
+      depthBias: -0.02,
+      unlit: true,
+    );
+
+    // 2. Soft directional cast shadow
+    final hw = w * 0.50;
+    final hd = d * 0.50;
+    final ox = shadowDir.x * height * 0.38;
+    final oz = shadowDir.z * height * 0.38;
+    addGroundPoly(
+      [
+        Vec3(cx - hw + ox, groundY, cz - hd + oz),
+        Vec3(cx - hw + ox, groundY, cz + hd + oz),
+        Vec3(cx + hw + ox, groundY, cz + hd + oz),
+        Vec3(cx + hw + ox, groundY, cz - hd + oz),
       ],
       shadowColor,
       layer: RenderLayer.shadow,
       unlit: true,
     );
+  }
+
+  /// Adds a faceted octagonal ground contact + cast shadow under organic rocks, bushes, cacti & outcrops.
+  void addDiscShadow(
+    double cx,
+    double groundY,
+    double cz,
+    double rx,
+    double rz,
+    double height,
+    Vec3 shadowDir,
+    Color shadowColor, {
+    int sides = 6,
+  }) {
+    final y = groundY + 0.022;
+    final ox = shadowDir.x * height * 0.32;
+    final oz = shadowDir.z * height * 0.32;
+    final contactVerts = <Vec3>[];
+    final castVerts = <Vec3>[];
+    for (int i = 0; i < sides; i++) {
+      // Counter-clockwise on XZ ground plane so normal faces +Y
+      final a = -(i / sides) * math.pi * 2.0;
+      final ca = math.cos(a);
+      final sa = math.sin(a);
+      contactVerts.add(Vec3(cx + ca * rx * 1.04, y, cz + sa * rz * 1.04));
+      castVerts.add(Vec3(cx + ox + ca * rx * 0.96, y, cz + oz + sa * rz * 0.96));
+    }
+    final contactCol = Color.from(
+      alpha: (shadowColor.a * 1.28).clamp(0.12, 0.42),
+      red: DesertPalette.shadowContact.r,
+      green: DesertPalette.shadowContact.g,
+      blue: DesertPalette.shadowContact.b,
+    );
+    addGroundPoly(castVerts, shadowColor, layer: RenderLayer.shadow, unlit: true);
+    addGroundPoly(
+      contactVerts,
+      contactCol,
+      layer: RenderLayer.shadow,
+      depthBias: -0.02,
+      unlit: true,
+    );
+  }
+
+  /// Adds a 3D depth-sorted catenary wire ribbon (telephone wires, festoon string lights)
+  /// that batches inside `Canvas.drawVertices` and naturally occludes behind taller objects.
+  void addSaggingWire(
+    Vec3 start,
+    Vec3 end,
+    Color color, {
+    double sag = 0.28,
+    double thickness = 0.036,
+    int segments = 5,
+    int bulbCount = 0,
+    Color? bulbGlowColor,
+  }) {
+    for (int s = 0; s < segments; s++) {
+      final t0 = s / segments;
+      final t1 = (s + 1) / segments;
+      final p0 = start.lerp(end, t0) - Vec3(0, math.sin(t0 * math.pi) * sag, 0);
+      final p1 = start.lerp(end, t1) - Vec3(0, math.sin(t1 * math.pi) * sag, 0);
+      addQuad(
+        p0,
+        p1,
+        p1 - Vec3(0, thickness, 0),
+        p0 - Vec3(0, thickness, 0),
+        color,
+        doubleSided: true,
+        unlit: true,
+      );
+    }
+
+    if (bulbCount > 0 && bulbGlowColor != null) {
+      for (int b = 1; b <= bulbCount; b++) {
+        final tb = b / (bulbCount + 1);
+        final bp = start.lerp(end, tb) - Vec3(0, math.sin(tb * math.pi) * sag + 0.07, 0);
+        addBox(
+          bp.x,
+          bp.y,
+          bp.z,
+          0.09,
+          0.10,
+          0.09,
+          DesertPalette.cream,
+          emissiveColor: bulbGlowColor,
+          emissiveStrength: 1.0,
+          depthBias: -0.15,
+        );
+      }
+    }
   }
 
   /// Adds a 3D box with bottom center at (cx, yBottom, cz) and size (w, h, d).
@@ -454,8 +602,7 @@ class MeshBuilder {
     }
   }
 
-  /// Adds a tapered trapezoidal 3D prism (ideal for sleek sloped car cabins & windshields!).
-  /// Bottom size is `(bottomLen, bottomWid)` along `(X, Z)`, top size is `(topLen, topWid)` shifted by `topShiftX`.
+  /// Adds a tapered trapezoidal 3D prism (for sloped cabins, Googie roofs & RV cab-over noses).
   void addTaperedBox({
     required double cx,
     required double yBottom,
@@ -466,6 +613,7 @@ class MeshBuilder {
     required double topWid,
     required double height,
     double topShiftX = 0.0,
+    double topShiftZ = 0.0,
     required Color color,
     Color? topColor,
     int? subOrder,
@@ -477,8 +625,8 @@ class MeshBuilder {
 
     final tx0 = cx + topShiftX - topLen * 0.5;
     final tx1 = cx + topShiftX + topLen * 0.5;
-    final tz0 = cz - topWid * 0.5;
-    final tz1 = cz + topWid * 0.5;
+    final tz0 = cz + topShiftZ - topWid * 0.5;
+    final tz1 = cz + topShiftZ + topWid * 0.5;
     final y0 = yBottom;
     final y1 = yBottom + height;
 
@@ -492,19 +640,14 @@ class MeshBuilder {
     final t11 = Vec3(tx1, y1, tz1);
     final t01 = Vec3(tx0, y1, tz1);
 
-    // Top (+Y)
     addQuad(t00, t01, t11, t10, topColor ?? color, subOrder: subOrder);
-    // Front (+X sloped windshield)
     addQuad(b11, b10, t10, t11, color, subOrder: subOrder);
-    // Back (-X sloped rear)
     addQuad(b00, b01, t01, t00, color, subOrder: subOrder);
-    // Right side (+Z)
     addQuad(b01, b11, t11, t01, color, subOrder: subOrder);
-    // Left side (-Z)
     addQuad(b10, b00, t00, t10, color, subOrder: subOrder);
   }
 
-  /// Adds flush inset window quads onto all 4 sloped sides of a tapered vehicle cabin (ZERO z-fighting!).
+  /// Adds flush inset window quads onto all 4 sloped sides of a tapered vehicle cabin.
   void addCabinWindows({
     required double cx,
     required double yBottom,
@@ -553,7 +696,6 @@ class MeshBuilder {
       final q3 = lerpV(lerpV(p0, p1, sideInset), lerpV(p3, p2, sideInset), 1.0 - insetTop) + lift;
       addQuad(q0, q1, q2, q3, glassColor, subOrder: subOrder);
 
-      // Subtle diagonal sunlit glass reflection streak
       if (sheenColor != null) {
         final s0 = lerpV(q0, q1, 0.16) + n * 0.006;
         final s1 = lerpV(q0, q1, 0.34) + n * 0.006;
@@ -563,14 +705,13 @@ class MeshBuilder {
       }
     }
 
-    // Front (+X), Back (-X), Right (+Z), Left (-Z)
     addFaceWindow(b11, b10, t10, t11);
     addFaceWindow(b00, b01, t01, t00);
     addFaceWindow(b01, b11, t11, t01);
     addFaceWindow(b10, b00, t00, t10);
   }
 
-  /// Adds a flush outward-facing quad on a box wall facing +X, -X, +Z, or -Z (ZERO z-fighting!).
+  /// Adds a flush outward-facing quad on a box wall facing +X or -X.
   void addFlushRectOnX(
     double xWall,
     double cy,
@@ -614,7 +755,7 @@ class MeshBuilder {
     }
   }
 
-  /// Adds a flush outward-facing quad on a wall facing +Z or -Z (ZERO z-fighting!).
+  /// Adds a flush outward-facing quad on a wall facing +Z or -Z.
   void addFlushRectOnZ(
     double cx,
     double cy,
@@ -680,6 +821,7 @@ class MeshBuilder {
     Color? emissiveColor,
     double emissiveStrength = 0.0,
     bool emissiveNightOnly = true,
+    bool isCloud = false,
     int? subOrder,
   }) {
     final bot = <Vec3>[];
@@ -709,6 +851,7 @@ class MeshBuilder {
         emissiveColor: emissiveColor,
         emissiveStrength: emissiveStrength,
         emissiveNightOnly: emissiveNightOnly,
+        isCloud: isCloud,
         subOrder: subOrder,
       );
     }
@@ -726,6 +869,7 @@ class MeshBuilder {
           emissiveColor: emissiveColor,
           emissiveStrength: emissiveStrength,
           emissiveNightOnly: emissiveNightOnly,
+          isCloud: isCloud,
           sortGroupAnchor: layer == RenderLayer.world ? _sortGroupAnchor : null,
           subOrder: subOrder ?? _subOrder,
         ),
@@ -853,7 +997,7 @@ class MeshBuilder {
       Vec3(x, cy + hh, cz + hd),
       dayColor,
       emissiveColor: nightGlow,
-      emissiveStrength: 0.92,
+      emissiveStrength: emissiveStrengthForWindow,
       emissiveNightOnly: true,
       depthBias: depthBias,
     );
@@ -879,11 +1023,13 @@ class MeshBuilder {
       Vec3(x, cy + hh, cz - hd),
       dayColor,
       emissiveColor: nightGlow,
-      emissiveStrength: 0.92,
+      emissiveStrength: emissiveStrengthForWindow,
       emissiveNightOnly: true,
       depthBias: depthBias,
     );
   }
+
+  static const double emissiveStrengthForWindow = 0.92;
 
   void addLine(
     Vec3 a,

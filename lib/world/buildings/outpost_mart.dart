@@ -6,8 +6,7 @@ import '../../engine/mesh_parts.dart';
 import '../../engine/vec3.dart';
 import '../../theme/desert_palette.dart';
 
-/// STAGE 2: Outpost Convenience Store ("MART") with glowing soda vending machine,
-/// oak barrel, southwestern parapet vigas, framed display windows, and side annex.
+/// STAGE 2: Outpost Convenience Store ("MART") evolving visually through Level 5.
 class OutpostMartBuilding {
   const OutpostMartBuilding._();
 
@@ -16,19 +15,12 @@ class OutpostMartBuilding {
     Vec3 origin,
     int level,
     DesertLighting lighting,
-    Color shadowCol,
-  ) {
-    mesh.addBoxShadow(
-      origin.x,
-      origin.z,
-      4.8,
-      3.6,
-      3.3,
-      lighting.shadowDirection,
-      shadowCol,
-    );
-
+    Color shadowCol, [
+    double animTime = 0.0,
+  ]) {
     mesh.withTransform(origin, 0, () {
+      mesh.addBoxShadow(0, 0, 4.8, 3.6, 3.3, lighting.shadowDirection, shadowCol);
+
       mesh.addBox(0, 0, 0.22, 4.9, 0.20, 3.8, DesertPalette.concrete);
       mesh.addBox(0, 0.20, -0.22, 4.45, 2.55, 2.75, DesertPalette.cream);
       mesh.addBox(0, 0.20, 1.18, 4.50, 0.48, 0.08, DesertPalette.terracotta, depthBias: -0.12);
@@ -70,7 +62,6 @@ class OutpostMartBuilding {
       );
       mesh.addRightWindow(2.23, 1.35, -0.22, 1.10, 0.90, DesertPalette.windowDay, DesertPalette.windowNight);
 
-      // Timber porch pillars & turquoise striped awning
       for (final px in [-2.0, -0.72, 0.72, 2.0]) {
         mesh.addBox(px, 0.20, 1.88, 0.14, 1.92, 0.14, DesertPalette.wood);
       }
@@ -86,26 +77,25 @@ class OutpostMartBuilding {
         stripes: 8,
       );
 
-      // Ice chest on left + glowing retro soda vending machine on right + oak barrel
-      mesh.addBox(-1.60, 0.20, 1.48, 0.78, 0.60, 0.42, DesertPalette.creamDark);
-      mesh.addFrustum(-2.12, 0.20, 1.46, 0.22, 0.22, 0.20, 0.20, 0.56, 7, DesertPalette.wood);
-      // Glowing desert soda vending machine
-      mesh.addBox(1.70, 0.20, 1.44, 0.62, 1.24, 0.42, DesertPalette.awningRed);
-      mesh.addBox(
-        1.70,
-        0.72,
-        1.65,
-        0.46,
-        0.56,
-        0.05,
-        DesertPalette.cream,
-        emissiveColor: DesertPalette.neonWarm,
-        emissiveStrength: 0.9,
-        depthBias: -0.20,
-      );
+      if (level >= 2) {
+        mesh.addBox(-1.60, 0.20, 1.48, 0.78, 0.60, 0.42, DesertPalette.creamDark);
+        mesh.addFrustum(-2.12, 0.20, 1.46, 0.22, 0.22, 0.20, 0.20, 0.56, 7, DesertPalette.wood);
+        mesh.addBox(1.70, 0.20, 1.44, 0.62, 1.24, 0.42, DesertPalette.awningRed);
+        mesh.addBox(
+          1.70,
+          0.72,
+          1.65,
+          0.46,
+          0.56,
+          0.05,
+          DesertPalette.cream,
+          emissiveColor: DesertPalette.neonWarm,
+          emissiveStrength: 0.9,
+          depthBias: -0.20,
+        );
+      }
       MeshParts.addPottedCactus(mesh, cx: 0.72, yBottom: 0.20, cz: 1.50);
 
-      // Warm hanging porch bulbs
       for (final lx in [-1.35, 0.0, 1.35]) {
         mesh.addBox(
           lx,
@@ -121,7 +111,6 @@ class OutpostMartBuilding {
         );
       }
 
-      // Rooftop illuminated "MART" marquee
       MeshParts.addMarqueeSign(
         mesh,
         cx: 0,
@@ -141,12 +130,40 @@ class OutpostMartBuilding {
         intensity: 0.75,
       );
 
-      // Level 3+: Side supply annex & rooftop AC unit + chimney stack
       if (level >= 3) {
         mesh.addBox(-2.72, 0.20, -0.30, 1.12, 1.90, 2.15, DesertPalette.creamDark);
         mesh.addBox(-2.72, 2.10, -0.30, 1.24, 0.20, 2.30, DesertPalette.terracotta);
         mesh.addBox(1.25, 3.04, -0.65, 0.78, 0.46, 0.68, DesertPalette.metal);
         mesh.addBox(-1.45, 3.04, -0.90, 0.44, 0.65, 0.44, DesertPalette.sandstone);
+      }
+
+      // Level 4+: Covered firewood & water supply rack on right + geometric adobe mural band
+      if (level >= 4) {
+        mesh.addFlushRectOnZ(0, 2.52, 1.16, 4.25, 0.14, DesertPalette.gold, positiveZ: true);
+        mesh.addBox(2.62, 0.20, 0.20, 0.72, 1.35, 1.45, DesertPalette.wood);
+        mesh.addSlopedAwning(2.62, 1.65, 1.48, 0.20, 0.86, 1.55, DesertPalette.terracotta);
+      }
+
+      // Level 5: Rooftop solar panel array + spinning brass weathervane!
+      if (level >= 5) {
+        mesh.addTaperedBox(
+          cx: -0.35,
+          yBottom: 3.06,
+          cz: -0.75,
+          bottomLen: 1.55,
+          bottomWid: 0.88,
+          topLen: 1.55,
+          topWid: 0.72,
+          height: 0.18,
+          topShiftZ: 0.08,
+          color: DesertPalette.metalDark,
+          topColor: const Color(0xFF2B4663),
+        );
+        mesh.addBox(1.85, 3.07, 0.65, 0.08, 0.72, 0.08, DesertPalette.metalDark);
+        mesh.withTransform(const Vec3(1.85, 3.74, 0.65), animTime * 1.6, () {
+          mesh.addBox(0, 0, 0, 0.56, 0.07, 0.08, DesertPalette.gold);
+          mesh.addBox(0, 0, 0, 0.08, 0.07, 0.56, DesertPalette.gold);
+        });
       }
     });
   }

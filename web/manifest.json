@@ -1,12 +1,12 @@
 {
-    "name": "desert_outpost",
-    "short_name": "desert_outpost",
+    "name": "Desert Outpost",
+    "short_name": "Desert Outpost",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
-    "orientation": "portrait-primary",
+    "background_color": "#DDBA87",
+    "theme_color": "#C8794B",
+    "description": "Low-poly 3D Monument Valley idle clicker & desert town diorama.",
+    "orientation": "any",
     "prefer_related_applications": false,
     "icons": [
         {

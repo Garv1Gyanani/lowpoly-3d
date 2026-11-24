@@ -1,15 +1,15 @@
 # lowpoly-3d
 
-**Desert Outpost** — A minimalist low-poly 3D idle clicker & Monument Valley diorama built 100% in pure Dart and Flutter (FVM 3.47.9).
+**Desert Outpost** — A minimalist low-poly 3D idle clicker & Monument Valley diorama built 100% in pure Dart and Flutter (FVM `3.50.1`).
 
 ## Features
-- Custom pure-Dart 3D perspective low-poly renderer with flat shading, day/sunset/night lighting, and zero-pop sort groups.
-- Single continuous 3D Utah desert terrain with sculpted Monument Valley mesas, Route 163 highway, animated traffic, and sidewalk-following visitors.
-- Level 1 tiny desert cart progression with progressive parking tiers (Dirt Pull-Off -> Gravel Lot -> Paved Outpost Lot) and 8 modular low-poly landmarks.
-- Carved-wood tactile mobile game HUD with diegetic in-world floating build/upgrade bubbles and an interactive 360° 3D Object Studio.
+- **Batched Pure-Dart 3D Engine**: Single-pass `Canvas.drawVertices` hardware triangle batching, static world mesh caching, near-plane polygon clipping, Monument Valley warm-vs-cool facet shading, and grounded two-stage contact shadows.
+- **Responsive Diorama Camera**: Intimate Stage 1 cart framing that cinematically expands as your town grows, responsive across 16:9 widescreen browsers and 9:16 mobile portrait, with smooth pan, zoom, and horizontal orbit (`Right-drag`, `Shift+drag`, or `Q`/`E`).
+- **Living Route 163 Ecosystem**: Sculpted Monument Valley mesas, dry arroyo washes, luminous 3D clouds, depth-sorted utility wires, multi-passenger Camper RVs & Tourist Vans, and 8 landmarks with visual upgrades from **Level 1 through Level 5**.
+- **Handcrafted Carved-Wood HUD**: Custom `Bungee` & `Fredoka` typography, live miniature 3D isometric build/upgrade card previews, affordability progress bars with shake feedback, local save/load persistence with offline earnings, and a 360° 3D Object Studio.
 
 ## Run
 ```bash
 fvm flutter pub get
-fvm flutter run
+fvm flutter run -d web-server
 ```

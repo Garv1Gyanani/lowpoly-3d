@@ -1,6 +1,17 @@
-import 'package:flutter/material.dart';
+import 'dart:math' as math;
 
+import 'package:flutter/widgets.dart';
+
+import '../engine/camera_3d.dart';
+import '../engine/lighting.dart';
+import '../engine/mesh_builder.dart';
+import '../engine/renderer_3d.dart';
+import '../engine/vec3.dart';
+import '../models/game_models.dart';
 import '../theme/desert_palette.dart';
+import '../world/building_models.dart';
+import '../world/entity_models.dart';
+import 'game_icons.dart';
 
 /// Game-style UI color tokens (warm carved desert wood, parchment, brass, emerald, terracotta).
 class GameHudColors {
@@ -10,8 +21,8 @@ class GameHudColors {
   static const Color woodRim = Color(0xFF7B4F34);
   static const Color woodBody = Color(0xFF5D3A26);
   static const Color woodDeep = Color(0xFF341E13);
-  static const Color parchment = Color(0xFFF3E4C6);
-  static const Color parchmentDark = Color(0xFFE3CEAA);
+  static const Color parchment = Color(0xFFF4E6CA);
+  static const Color parchmentDark = Color(0xFFE5D0AC);
   static const Color ink = Color(0xFF331E14);
   static const Color inkMuted = Color(0xFF6F503C);
 
@@ -65,45 +76,48 @@ class _GameBevelButtonState extends State<GameBevelButton> {
     final baseCol = _active ? widget.baseColor : GameHudColors.stoneBase;
     final drop = (_pressed && _active) ? widget.bevelDepth : 0.0;
 
-    return GestureDetector(
-      onTapDown: _active ? (_) => setState(() => _pressed = true) : null,
-      onTapUp: _active
-          ? (_) {
-              setState(() => _pressed = false);
-              widget.onTap?.call();
-            }
-          : null,
-      onTapCancel: () => setState(() => _pressed = false),
-      child: Padding(
-        padding: EdgeInsets.only(top: drop, bottom: widget.bevelDepth - drop),
-        child: Container(
-          padding: widget.padding,
-          decoration: BoxDecoration(
-            color: topCol,
-            borderRadius: BorderRadius.circular(widget.radius),
-            border: Border.all(color: widget.borderColor, width: 2.0),
-            boxShadow: [
-              if (!_pressed || !_active)
+    return MouseRegion(
+      cursor: _active ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      child: GestureDetector(
+        onTapDown: _active ? (_) => setState(() => _pressed = true) : null,
+        onTapUp: _active
+            ? (_) {
+                setState(() => _pressed = false);
+                widget.onTap?.call();
+              }
+            : null,
+        onTapCancel: () => setState(() => _pressed = false),
+        child: Padding(
+          padding: EdgeInsets.only(top: drop, bottom: widget.bevelDepth - drop),
+          child: Container(
+            padding: widget.padding,
+            decoration: BoxDecoration(
+              color: topCol,
+              borderRadius: BorderRadius.circular(widget.radius),
+              border: Border.all(color: widget.borderColor, width: 2.0),
+              boxShadow: [
+                if (!_pressed || !_active)
+                  BoxShadow(
+                    color: baseCol,
+                    offset: Offset(0, widget.bevelDepth),
+                    blurRadius: 0,
+                  ),
                 BoxShadow(
-                  color: baseCol,
-                  offset: Offset(0, widget.bevelDepth),
-                  blurRadius: 0,
+                  color: const Color(0xFF000000).withValues(alpha: 0.28),
+                  offset: Offset(0, widget.bevelDepth + 3),
+                  blurRadius: 8,
                 ),
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.28),
-                offset: Offset(0, widget.bevelDepth + 3),
-                blurRadius: 8,
-              ),
-            ],
+              ],
+            ),
+            child: widget.child,
           ),
-          child: widget.child,
         ),
       ),
     );
   }
 }
 
-/// Top-left carved-wood & gold coin HUD counter (no white Material card).
+/// Top-left carved-wood & gold coin HUD counter with custom `Bungee` display numbers.
 class GameCoinHud extends StatelessWidget {
   const GameCoinHud({
     super.key,
@@ -121,7 +135,7 @@ class GameCoinHud extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(6, 5, 14, 5),
       decoration: BoxDecoration(
-        color: GameHudColors.woodFrame.withValues(alpha: 0.92),
+        color: GameHudColors.woodFrame.withValues(alpha: 0.94),
         borderRadius: BorderRadius.circular(22),
         border: Border.all(color: GameHudColors.woodRim, width: 2.2),
         boxShadow: [
@@ -131,7 +145,7 @@ class GameCoinHud extends StatelessWidget {
             blurRadius: 0,
           ),
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.28),
+            color: const Color(0xFF000000).withValues(alpha: 0.28),
             offset: const Offset(0, 6),
             blurRadius: 10,
           ),
@@ -140,27 +154,24 @@ class GameCoinHud extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Embossed gold coin emblem
           Container(
-            width: 30,
-            height: 30,
+            width: 31,
+            height: 31,
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                colors: [Color(0xFFFFE285), GameHudColors.goldTop, GameHudColors.goldBase],
+                colors: [Color(0xFFFFE58F), GameHudColors.goldTop, GameHudColors.goldBase],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
               shape: BoxShape.circle,
               border: Border.all(color: const Color(0xFF7D5310), width: 2.0),
             ),
-            child: const Center(
+            child: Center(
               child: Text(
                 '\$',
-                style: TextStyle(
-                  color: Color(0xFF5D3A08),
-                  fontWeight: FontWeight.w900,
-                  fontSize: 16,
-                  height: 1.0,
+                style: DesertTypography.display(
+                  size: 15,
+                  color: const Color(0xFF5D3A08),
                 ),
               ),
             ),
@@ -172,25 +183,22 @@ class GameCoinHud extends StatelessWidget {
             children: [
               Text(
                 cashText,
-                style: const TextStyle(
-                  color: Color(0xFFFFF6E3),
-                  fontWeight: FontWeight.w900,
-                  fontSize: 17,
-                  height: 1.05,
-                  shadows: [
-                    Shadow(color: Colors.black54, offset: Offset(0, 1.5), blurRadius: 2),
+                style: DesertTypography.display(
+                  size: 16,
+                  color: const Color(0xFFFFF6E3),
+                  shadows: const [
+                    Shadow(color: Color(0x8A000000), offset: Offset(0, 1.5), blurRadius: 2),
                   ],
                 ),
               ),
               Text(
                 rateText,
-                style: TextStyle(
+                style: DesertTypography.ui(
+                  size: 11,
+                  weight: FontWeight.w700,
                   color: hasPassiveIncome
                       ? const Color(0xFF8CFF9B)
-                      : DesertPalette.sand.withValues(alpha: 0.8),
-                  fontWeight: FontWeight.w800,
-                  fontSize: 10.5,
-                  height: 1.1,
+                      : DesertPalette.sand.withValues(alpha: 0.88),
                 ),
               ),
             ],
@@ -201,7 +209,7 @@ class GameCoinHud extends StatelessWidget {
   }
 }
 
-/// Compact wooden-framed parchment game panel (for floating game menus & trays).
+/// Compact wooden-framed parchment game panel.
 class GameWoodPanel extends StatelessWidget {
   const GameWoodPanel({
     super.key,
@@ -229,7 +237,7 @@ class GameWoodPanel extends StatelessWidget {
             blurRadius: 0,
           ),
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.35),
+            color: const Color(0xFF000000).withValues(alpha: 0.35),
             offset: const Offset(0, 10),
             blurRadius: 20,
           ),
@@ -240,8 +248,9 @@ class GameWoodPanel extends StatelessWidget {
   }
 }
 
-/// In-world floating 3D diegetic action bubble anchored over a 3D world position.
-class WorldActionBubble extends StatelessWidget {
+/// In-world floating 3D diegetic action bubble with affordability fill bar
+/// and snappy horizontal shake feedback when tapped before affordable!
+class WorldActionBubble extends StatefulWidget {
   const WorldActionBubble({
     super.key,
     required this.icon,
@@ -249,77 +258,148 @@ class WorldActionBubble extends StatelessWidget {
     required this.costText,
     required this.canAfford,
     required this.onTap,
+    this.progress = 0.0,
+    this.onUnaffordableTap,
     this.accentColor = GameHudColors.greenTop,
     this.accentBase = GameHudColors.greenBase,
   });
 
-  final IconData icon;
+  final GameIconKind icon;
   final String label;
   final String costText;
   final bool canAfford;
+  final double progress;
   final VoidCallback onTap;
+  final VoidCallback? onUnaffordableTap;
   final Color accentColor;
   final Color accentBase;
 
   @override
-  Widget build(BuildContext context) {
-    final bgTop = canAfford ? accentColor : GameHudColors.woodFrame.withValues(alpha: 0.88);
-    final bgBase = canAfford ? accentBase : GameHudColors.woodDeep;
+  State<WorldActionBubble> createState() => _WorldActionBubbleState();
+}
 
-    return GestureDetector(
-      onTap: canAfford ? onTap : null,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-            decoration: BoxDecoration(
-              color: bgTop,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: canAfford ? const Color(0xFFFFF4D2) : GameHudColors.woodRim,
-                width: 1.8,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: bgBase,
-                  offset: const Offset(0, 2.5),
-                  blurRadius: 0,
-                ),
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.28),
-                  offset: const Offset(0, 5),
-                  blurRadius: 6,
-                ),
-              ],
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  icon,
-                  size: 13,
-                  color: canAfford ? Colors.white : DesertPalette.sand,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  '$label $costText',
-                  style: TextStyle(
-                    color: canAfford ? Colors.white : DesertPalette.cream,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 11,
-                    letterSpacing: 0.2,
+class _WorldActionBubbleState extends State<WorldActionBubble>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _shakeCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 280),
+  );
+
+  @override
+  void dispose() {
+    _shakeCtrl.dispose();
+    super.dispose();
+  }
+
+  void _handlePress() {
+    if (widget.canAfford) {
+      widget.onTap();
+    } else {
+      _shakeCtrl.forward(from: 0.0);
+      widget.onUnaffordableTap?.call();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bgTop = widget.canAfford
+        ? widget.accentColor
+        : GameHudColors.woodFrame.withValues(alpha: 0.90);
+    final bgBase = widget.canAfford ? widget.accentBase : GameHudColors.woodDeep;
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: _handlePress,
+        child: AnimatedBuilder(
+          animation: _shakeCtrl,
+          builder: (context, child) {
+            final shakeX = _shakeCtrl.isAnimating
+                ? math.sin(_shakeCtrl.value * math.pi * 4.0) * (1.0 - _shakeCtrl.value) * 6.0
+                : 0.0;
+            return Transform.translate(
+              offset: Offset(shakeX, 0),
+              child: child,
+            );
+          },
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.fromLTRB(9, 5, 9, 5),
+                decoration: BoxDecoration(
+                  color: bgTop,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: widget.canAfford ? const Color(0xFFFFF4D2) : GameHudColors.woodRim,
+                    width: 1.8,
                   ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: bgBase,
+                      offset: const Offset(0, 2.5),
+                      blurRadius: 0,
+                    ),
+                    BoxShadow(
+                      color: const Color(0xFF000000).withValues(alpha: 0.28),
+                      offset: const Offset(0, 5),
+                      blurRadius: 6,
+                    ),
+                  ],
                 ),
-              ],
-            ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        GameIcon(
+                          widget.icon,
+                          size: 13,
+                          color: widget.canAfford ? const Color(0xFFFFFFFF) : DesertPalette.sand,
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          '${widget.label} ${widget.costText}',
+                          style: DesertTypography.display(
+                            size: 10.5,
+                            color: widget.canAfford ? const Color(0xFFFFFFFF) : DesertPalette.cream,
+                            letterSpacing: 0.4,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (!widget.canAfford && widget.progress > 0.02) ...[
+                      const SizedBox(height: 4),
+                      SizedBox(
+                        width: 78,
+                        height: 3.5,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(2),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              Container(color: GameHudColors.woodDeep),
+                              FractionallySizedBox(
+                                alignment: Alignment.centerLeft,
+                                widthFactor: widget.progress.clamp(0.0, 1.0),
+                                child: Container(color: GameHudColors.goldTop),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              CustomPaint(
+                size: const Size(10, 5),
+                painter: _CaretPainter(bgBase),
+              ),
+            ],
           ),
-          // Tiny downward pointer caret anchoring the bubble to the 3D object
-          CustomPaint(
-            size: const Size(10, 5),
-            painter: _CaretPainter(bgBase),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -341,4 +421,110 @@ class _CaretPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _CaretPainter oldDelegate) => oldDelegate.color != color;
+}
+
+/// Cached miniature 3D isometric preview rendered directly on Build & Upgrade deck cards!
+class Mini3DAssetPreview extends StatelessWidget {
+  const Mini3DAssetPreview({
+    super.key,
+    this.businessType,
+    this.decorationKind,
+    this.level = 1,
+    this.size = const Size(44, 34),
+  });
+
+  final BusinessType? businessType;
+  final DecorationKind? decorationKind;
+  final int level;
+  final Size size;
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: CustomPaint(
+        size: size,
+        painter: _Mini3DAssetPainter(
+          businessType: businessType,
+          decorationKind: decorationKind,
+          level: level,
+        ),
+      ),
+    );
+  }
+}
+
+class _Mini3DAssetPainter extends CustomPainter {
+  const _Mini3DAssetPainter({
+    this.businessType,
+    this.decorationKind,
+    required this.level,
+  });
+
+  final BusinessType? businessType;
+  final DecorationKind? decorationKind;
+  final int level;
+
+  static final DesertLighting _studioLight = DesertLighting.fromTime(0.39);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final mesh = MeshBuilder();
+    double dist = 12.0;
+    double targetY = 1.4;
+
+    if (businessType != null) {
+      (dist, targetY) = switch (businessType!) {
+        BusinessType.vendorStall => (9.0, 1.15),
+        BusinessType.convenienceStore => (12.8, 1.55),
+        BusinessType.foodStand => (10.5, 1.35),
+        BusinessType.desertDiner => (14.2, 1.75),
+        BusinessType.gasStation => (14.8, 1.70),
+        BusinessType.oasisPlaza => (11.5, 1.15),
+        BusinessType.desertMotel => (15.8, 2.05),
+        BusinessType.lookoutCamp => (16.5, 2.45),
+      };
+      BuildingModels.buildByType(
+        mesh,
+        businessType!,
+        Vec3.zero,
+        level,
+        _studioLight,
+        const Color(0x00000000),
+        0.5,
+      );
+    } else if (decorationKind != null) {
+      dist = 6.2;
+      targetY = 0.85;
+      EntityModels.buildDecoration(
+        mesh,
+        PlacedDecoration(
+          id: 'preview',
+          kind: decorationKind!,
+          position: Vec3.zero,
+          name: '',
+          cost: 0,
+        ),
+        _studioLight,
+        0.5,
+      );
+    }
+
+    mesh.signs.clear();
+    mesh.glows.clear();
+
+    final cam = Camera3D(
+      yaw: -0.46,
+      pitch: 0.34,
+      distance: dist,
+      fovY: 0.56,
+      target: Vec3(0, targetY, 0),
+    );
+    SceneRenderer3D.paintMesh(canvas, size, cam, _studioLight, mesh);
+  }
+
+  @override
+  bool shouldRepaint(covariant _Mini3DAssetPainter oldDelegate) =>
+      oldDelegate.businessType != businessType ||
+      oldDelegate.decorationKind != decorationKind ||
+      oldDelegate.level != level;
 }

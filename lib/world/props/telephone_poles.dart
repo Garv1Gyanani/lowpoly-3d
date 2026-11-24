@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'dart:ui';
 
 import '../../engine/lighting.dart';
@@ -7,7 +6,9 @@ import '../../engine/vec3.dart';
 import '../../theme/desert_palette.dart';
 import '../terrain/desert_terrain.dart';
 
-/// Highway wooden telephone poles with ceramic insulators and sagging power lines.
+/// Highway wooden telephone poles positioned cleanly along the north roadside flanks
+/// (`z = 11.25`, outside the central outpost plaza) using true 3D depth-sorted sagging wires
+/// so utility wires NEVER cut across foreground vehicles or draw through RVs!
 class TelephonePoles {
   const TelephonePoles._();
 
@@ -16,41 +17,54 @@ class TelephonePoles {
     DesertLighting lighting,
     Color shadowCol,
   ) {
-    final poleXs = [-21.0, -12.5, -4.0, 4.5, 13.0, 21.5];
-    const poleZ = 16.0;
-    const poleH = 3.9;
-
-    for (final x in poleXs) {
-      final py = DesertTerrain.heightAt(x, poleZ);
-      mesh.addBoxShadow(x, poleZ, 0.35, 0.35, poleH, lighting.shadowDirection, shadowCol);
-      mesh.addBox(x, py, poleZ, 0.20, poleH, 0.20, DesertPalette.woodDark);
-      mesh.addBox(x, py + poleH - 0.42, poleZ, 0.16, 0.15, 1.2, DesertPalette.wood);
-      mesh.addBox(x, py + poleH - 0.27, poleZ - 0.46, 0.10, 0.12, 0.10, DesertPalette.cream);
-      mesh.addBox(x, py + poleH - 0.27, poleZ + 0.46, 0.10, 0.12, 0.10, DesertPalette.cream);
-    }
+    const poleZ = 11.20;
+    const poleH = 3.85;
 
     final wireColor = Color.lerp(
-      const Color(0xFF3E342D),
-      const Color(0xFF1A222E),
+      const Color(0xFF564438),
+      const Color(0xFF222A38),
       lighting.nightFactor,
     )!;
-    for (int i = 0; i < poleXs.length - 1; i++) {
-      final x0 = poleXs[i];
-      final x1 = poleXs[i + 1];
-      final y0 = DesertTerrain.heightAt(x0, poleZ) + poleH - 0.24;
-      final y1 = DesertTerrain.heightAt(x1, poleZ) + poleH - 0.24;
-      for (final zOff in [-0.46, 0.46]) {
-        const segs = 4;
-        for (int s = 0; s < segs; s++) {
-          final t0 = s / segs;
-          final t1 = (s + 1) / segs;
-          final sag0 = math.sin(t0 * math.pi) * 0.38;
-          final sag1 = math.sin(t1 * math.pi) * 0.38;
-          mesh.addLine(
-            Vec3(x0 + (x1 - x0) * t0, y0 + (y1 - y0) * t0 - sag0, poleZ + zOff),
-            Vec3(x0 + (x1 - x0) * t1, y0 + (y1 - y0) * t1 - sag1, poleZ + zOff),
+
+    // West & East roadside pole runs flanking the outpost driveway cleanly
+    const poleGroups = <List<double>>[
+      [-28.5, -20.2, -11.8],
+      [11.8, 20.2, 28.5],
+    ];
+
+    for (final group in poleGroups) {
+      for (final x in group) {
+        final py = DesertTerrain.heightAt(x, poleZ);
+        mesh.addBoxShadow(
+          x,
+          poleZ,
+          0.34,
+          0.34,
+          poleH,
+          lighting.shadowDirection,
+          shadowCol,
+          groundY: py + 0.02,
+        );
+        mesh.addBox(x, py, poleZ, 0.19, poleH, 0.19, DesertPalette.woodDark);
+        // Crossarm & ceramic insulators
+        mesh.addBox(x, py + poleH - 0.42, poleZ, 0.15, 0.14, 1.15, DesertPalette.wood);
+        mesh.addBox(x, py + poleH - 0.28, poleZ - 0.44, 0.09, 0.12, 0.09, DesertPalette.cream);
+        mesh.addBox(x, py + poleH - 0.28, poleZ + 0.44, 0.09, 0.12, 0.09, DesertPalette.cream);
+      }
+
+      for (int i = 0; i < group.length - 1; i++) {
+        final x0 = group[i];
+        final x1 = group[i + 1];
+        final y0 = DesertTerrain.heightAt(x0, poleZ) + poleH - 0.24;
+        final y1 = DesertTerrain.heightAt(x1, poleZ) + poleH - 0.24;
+        for (final zOff in [-0.44, 0.44]) {
+          mesh.addSaggingWire(
+            Vec3(x0, y0, poleZ + zOff),
+            Vec3(x1, y1, poleZ + zOff),
             wireColor,
-            width: 1.0,
+            sag: 0.30,
+            thickness: 0.032,
+            segments: 5,
           );
         }
       }
