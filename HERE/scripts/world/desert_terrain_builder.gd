@@ -247,8 +247,10 @@ static func add_welcome_sign(kit: MeshKit, pos: Vector3, rot_y: float) -> void:
 
 static func build_flora_and_roads_node(state) -> Node3D:
 	var kit := MeshKit.new()
-	_build_roads(kit, state.road_network)
+	_build_roads(kit, state.road_network, state.parking_lots)
 	for lot in state.parking_lots:
+		if not state.relocating_lot_id.is_empty() and lot["id"] == state.relocating_lot_id:
+			continue
 		BuildingBuilder.add_parking_lot(kit, lot)
 	# Deterministic flora scatter (auto-cleared under roads/lots/buildings)
 	for item in _get_scatter():
@@ -270,11 +272,71 @@ static func build_flora_and_roads_node(state) -> Node3D:
 	if state.outpost_stage() >= 5:
 		add_welcome_sign(kit, Vector3(-18.0, 0.0, 19.2), PI - 0.2)
 
+	_add_parcel_trait_markers(kit, state)
 	return kit.build_node("OutpostStatic", true)
 
 
-static func _build_roads(kit: MeshKit, road_net: RoadNetwork) -> void:
+static func _add_parcel_trait_markers(kit: MeshKit, state) -> void:
+	# Subtle low-poly environmental clues on Oil Seep, Aquifer, and Wind Corridor parcels
+	for px in range(OutpostLayout.PARCEL_COUNT_X):
+		for pz in range(OutpostLayout.PARCEL_COUNT_Z):
+			var p := Vector2i(px, pz)
+			var tr_id: int = state.world_grid.parcel_trait(p)
+			if tr_id != GameCatalog.ParcelTrait.OIL_SEEP and tr_id != GameCatalog.ParcelTrait.AQUIFER and tr_id != GameCatalog.ParcelTrait.WIND_CORRIDOR:
+				continue
+			var c := OutpostLayout.parcel_center(px, pz)
+			if state.is_world_point_occupied(c.x, c.z):
+				continue
+			if tr_id == GameCatalog.ParcelTrait.OIL_SEEP:
+				# Dark crude oil pool + sandstone rim
+				kit.add_frustum(c.x, 0.015, c.z, 2.35, 1.95, 2.15, 1.75, 0.05, 8, Color("242029"), Color("332c3a"), 0.2)
+				kit.add_frustum(c.x + 1.4, 0.01, c.z - 1.0, 0.85, 0.72, 0.55, 0.45, 0.55, 6, DesertPalette.SANDSTONE_DARK, DesertPalette.SANDSTONE, 0.7)
+				kit.add_frustum(c.x - 1.5, 0.01, c.z + 0.9, 0.65, 0.58, 0.38, 0.32, 0.40, 5, DesertPalette.SANDSTONE_DARK, DesertPalette.TERRACOTTA, 1.4)
+			elif tr_id == GameCatalog.ParcelTrait.AQUIFER:
+				# Shallow desert spring pool + lush reeds
+				kit.add_frustum(c.x, 0.014, c.z, 2.55, 1.95, 2.35, 1.75, 0.04, 8, DesertPalette.ARROYO_DARK, DesertPalette.ARROYO_SAND, 0.4)
+				kit.add_frustum(c.x, 0.025, c.z, 1.65, 1.25, 1.55, 1.15, 0.04, 8, DesertPalette.WATER, Color("76cad6"), 0.4)
+				add_bush(kit, Vector3(c.x + 1.85, 0.0, c.z + 0.5), 0.55, 0.3)
+				add_bush(kit, Vector3(c.x - 1.75, 0.0, c.z - 0.65), 0.48, 1.1)
+			elif tr_id == GameCatalog.ParcelTrait.WIND_CORRIDOR:
+				# Wind-swept sandstone cairn + wooden wind-sock post
+				add_rock(kit, Vector3(c.x - 0.8, -0.05, c.z), 0.75, 0.55, 0.5)
+				kit.add_box(c.x + 0.9, 0.0, c.z, 0.12, 2.1, 0.12, DesertPalette.WOOD_DARK)
+				kit.add_box(c.x + 1.38, 1.85, c.z, 0.82, 0.24, 0.08, DesertPalette.TURQUOISE)
+
+
+static func _collect_lot_driveway_edges(parking_lots: Array) -> Dictionary:
+	# Maps "gx,gz,side_char" -> true where a connected parking lot's apron opens onto that road tile
+	var open_edges: Dictionary = {}
+	for lot in parking_lots:
+		if not lot.get("is_connected", false):
+			continue
+		var spec: Dictionary = GameCatalog.PARKING_LOTS[lot["kind"]]
+		var sz := OutpostLayout.rotated_size(spec["grid_w"], spec["grid_d"], lot["rot"])
+		var gx: int = lot["grid_x"]
+		var gz: int = lot["grid_z"]
+		var side := BuildingBuilder.lot_effective_side(lot)
+		match side:
+			GameCatalog.LotEntrySide.SOUTH:
+				for dx in range(sz.x):
+					open_edges["%d,%d,N" % [gx + dx, gz + sz.y]] = true
+			GameCatalog.LotEntrySide.NORTH:
+				for dx in range(sz.x):
+					open_edges["%d,%d,S" % [gx + dx, gz - 1]] = true
+			GameCatalog.LotEntrySide.EAST:
+				for dz in range(sz.y):
+					open_edges["%d,%d,W" % [gx + sz.x, gz + dz]] = true
+			GameCatalog.LotEntrySide.WEST:
+				for dz in range(sz.y):
+					open_edges["%d,%d,E" % [gx - 1, gz + dz]] = true
+	return open_edges
+
+
+static func _build_roads(kit: MeshKit, road_net: RoadNetwork, parking_lots: Array = []) -> void:
 	const CS := OutpostLayout.GRID_CELL_SIZE
+	const HALF := CS * 0.5
+	var open_edges := _collect_lot_driveway_edges(parking_lots)
+
 	for cell: Vector2i in road_net.tiles.keys():
 		var tier: int = road_net.tiles[cell]
 		var c := OutpostLayout.cell_center_v(cell)
@@ -283,53 +345,182 @@ static func _build_roads(kit: MeshKit, road_net: RoadNetwork) -> void:
 		var has_s := road_net.has_road(Vector2i(cell.x, cell.y + 1)) or cell.y == OutpostLayout.HIGHWAY_ENTRY_ROW_Z
 		var has_w := road_net.has_road(Vector2i(cell.x - 1, cell.y))
 		var has_e := road_net.has_road(Vector2i(cell.x + 1, cell.y))
+		var has_nw := road_net.has_road(Vector2i(cell.x - 1, cell.y - 1))
+		var has_ne := road_net.has_road(Vector2i(cell.x + 1, cell.y - 1))
+		var has_sw := road_net.has_road(Vector2i(cell.x - 1, cell.y + 1)) or cell.y == OutpostLayout.HIGHWAY_ENTRY_ROW_Z
+		var has_se := road_net.has_road(Vector2i(cell.x + 1, cell.y + 1)) or cell.y == OutpostLayout.HIGHWAY_ENTRY_ROW_Z
+
+		var open_n := has_n or open_edges.has("%d,%d,N" % [cell.x, cell.y])
+		var open_s := has_s or open_edges.has("%d,%d,S" % [cell.x, cell.y])
+		var open_w := has_w or open_edges.has("%d,%d,W" % [cell.x, cell.y])
+		var open_e := has_e or open_edges.has("%d,%d,E" % [cell.x, cell.y])
 
 		var sh_col: Color
 		var sf_col: Color
-		var st_col := Color(-1, 0, 0)
+		var margin := 0.20
 		if tier == GameCatalog.RoadTier.DIRT:
-			sh_col = Color("c5a172")
-			sf_col = Color("a88356") if conn else Color("9c8468")
+			sh_col = Color("cfa977")
+			sf_col = Color("b28b59") if conn else Color("a38868")
+			margin = 0.24
 		elif tier == GameCatalog.RoadTier.GRAVEL:
-			sh_col = Color("a99b89")
-			sf_col = Color("83786c") if conn else Color("7b736a")
-			st_col = Color("b8aea0")
+			sh_col = Color("b0a18e")
+			sf_col = Color("867b6f") if conn else Color("7c746b")
+			margin = 0.18
 		else:
 			sh_col = DesertPalette.ASPHALT_SHOULDER
-			sf_col = Color("5d5650") if conn else Color("6b655f")
-			st_col = DesertPalette.ROAD_YELLOW
+			sf_col = DesertPalette.ASPHALT if conn else Color("5e5955")
+			margin = 0.20
 
-		# Exact non-overlapping road geometry: shoulder (y=0.020), center + edge connector tabs (y=0.032), stripes (y=0.044)
-		var rw := 1.56 if tier == GameCatalog.RoadTier.DIRT else 1.72
-		var arm_len := (CS - rw) * 0.5
-		var arm_off := rw * 0.5 + arm_len * 0.5
-		kit.add_ground_rect(c.x, 0.020, c.z, CS, CS, sh_col)
-		kit.add_ground_rect(c.x, 0.032, c.z, rw, rw, sf_col)
-		if has_n:
-			kit.add_ground_rect(c.x, 0.032, c.z - arm_off, rw, arm_len, sf_col)
-		if has_s:
-			kit.add_ground_rect(c.x, 0.032, c.z + arm_off, rw, arm_len, sf_col)
-		if has_w:
-			kit.add_ground_rect(c.x - arm_off, 0.032, c.z, arm_len, rw, sf_col)
-		if has_e:
-			kit.add_ground_rect(c.x + arm_off, 0.032, c.z, arm_len, rw, sf_col)
+		# 1. Full-tile base shoulder (y = 0.018)
+		kit.add_ground_rect(c.x, 0.018, c.z, CS, CS, sh_col)
 
-		if cell.y == OutpostLayout.HIGHWAY_ENTRY_ROW_Z:
-			var htw := rw * 0.5
-			var hbw := (rw + 1.45) * 0.5
-			var flare: Array[Vector3] = [
-				Vector3(c.x - htw, 0.031, c.z + CS * 0.5),
-				Vector3(c.x - hbw, 0.031, 11.48),
-				Vector3(c.x + hbw, 0.031, 11.48),
-				Vector3(c.x + htw, 0.031, c.z + CS * 0.5),
-			]
-			kit.add_ground_poly(flare, sf_col)
+		# 2. Seamless merged road surface (y = 0.030): extends flush to shared road/driveway edges (zero gaps!)
+		var x0 := c.x - HALF + (0.0 if open_w else margin)
+		var x1 := c.x + HALF - (0.0 if open_e else margin)
+		var z0 := c.z - HALF + (0.0 if open_n else margin)
+		var z1 := c.z + HALF - (0.0 if open_s else margin)
+		kit.add_ground_rect((x0 + x1) * 0.5, 0.030, (z0 + z1) * 0.5, x1 - x0, z1 - z0, sf_col)
 
-		if st_col.r >= 0.0:
-			if (has_w or has_e) and not (has_n and has_s):
-				kit.add_ground_rect(c.x, 0.044, c.z, 0.78, 0.10, st_col)
-			if (has_n or has_s) and not (has_w and has_e):
-				kit.add_ground_rect(c.x, 0.044, c.z, 0.10, 0.78, st_col)
+		# 3. Inner 90-degree corner shoulder fillets so turns look smoothly radiused
+		var fil := margin * 1.45
+		if has_n and has_w and not has_nw:
+			kit.add_tri(Vector3(c.x - HALF, 0.033, c.z - HALF), Vector3(c.x - HALF, 0.033, c.z - HALF + fil), Vector3(c.x - HALF + fil, 0.033, c.z - HALF), sh_col)
+		if has_n and has_e and not has_ne:
+			kit.add_tri(Vector3(c.x + HALF - fil, 0.033, c.z - HALF), Vector3(c.x + HALF, 0.033, c.z - HALF + fil), Vector3(c.x + HALF, 0.033, c.z - HALF), sh_col)
+		if has_s and has_w and not has_sw:
+			kit.add_tri(Vector3(c.x - HALF, 0.033, c.z + HALF - fil), Vector3(c.x - HALF, 0.033, c.z + HALF), Vector3(c.x - HALF + fil, 0.033, c.z + HALF), sh_col)
+		if has_s and has_e and not has_se:
+			kit.add_tri(Vector3(c.x + HALF, 0.033, c.z + HALF - fil), Vector3(c.x + HALF - fil, 0.033, c.z + HALF), Vector3(c.x + HALF, 0.033, c.z + HALF), sh_col)
 
-		if tier == GameCatalog.RoadTier.PAVED and ((cell.x + cell.y) % 3 == 0) and not has_n and (has_w or has_e):
-			add_street_lamp(kit, Vector3(c.x, 0.0, c.z - 0.96))
+		# 4. Detect exact 2-lane straight corridor vs intersection geometry
+		var is_ns_west := has_e and not has_w and (has_n or has_s) and not road_net.has_road(Vector2i(cell.x + 2, cell.y))
+		var is_ns_east := has_w and not has_e and (has_n or has_s) and not road_net.has_road(Vector2i(cell.x - 2, cell.y))
+		var is_ew_north := has_s and not has_n and (has_w or has_e) and not road_net.has_road(Vector2i(cell.x, cell.y + 2))
+		var is_ew_south := has_n and not has_s and (has_w or has_e) and not road_net.has_road(Vector2i(cell.x, cell.y - 2))
+		var is_single_ns := (has_n or has_s) and not has_w and not has_e
+		var is_single_ew := (has_w or has_e) and not has_n and not has_s
+
+		# True straight 2-lane corridor seam (suppressed cleanly inside intersections & outer turn caps)
+		var straight_ns_seam := is_ns_west and has_n and has_s and has_ne and has_se
+		var straight_ew_seam := is_ew_north and has_w and has_e and has_sw and has_se
+
+		# 5. Tier-specific surface details, curbs & lane lines
+		if tier == GameCatalog.RoadTier.DIRT:
+			# Subtle warm wheel-rut tracks down each lane (authentic desert two-track!)
+			var rut_col := Color("9a7446") if conn else Color("8c7457")
+			if is_ns_west or is_ns_east or is_single_ns:
+				var lane_cx := c.x + (0.06 if is_ns_west else (-0.06 if is_ns_east else 0.0))
+				kit.add_ground_rect(lane_cx - 0.34, 0.036, c.z, 0.20, CS - 0.12, rut_col)
+				kit.add_ground_rect(lane_cx + 0.34, 0.036, c.z, 0.20, CS - 0.12, rut_col)
+			elif is_ew_north or is_ew_south or is_single_ew:
+				var lane_cz := c.z + (0.06 if is_ew_north else (-0.06 if is_ew_south else 0.0))
+				kit.add_ground_rect(c.x, 0.036, lane_cz - 0.34, CS - 0.12, 0.20, rut_col)
+				kit.add_ground_rect(c.x, 0.036, lane_cz + 0.34, CS - 0.12, 0.20, rut_col)
+			# Small wooden trail guideposts on outer corners
+			if not open_w and not open_n and (has_e or has_s):
+				kit.add_box(c.x - HALF + 0.12, 0.0, c.z - HALF + 0.12, 0.11, 0.56, 0.11, DesertPalette.WOOD_DARK)
+			if not open_e and not open_n and (has_w or has_s):
+				kit.add_box(c.x + HALF - 0.12, 0.0, c.z - HALF + 0.12, 0.11, 0.56, 0.11, DesertPalette.WOOD_DARK)
+
+		elif tier == GameCatalog.RoadTier.GRAVEL:
+			# Subtle lighter compacted gravel crown along 2-lane seam + crisp edge stones
+			var crown_col := Color("a29688")
+			var edge_col := Color("c2b7a8")
+			if straight_ns_seam:
+				kit.add_ground_rect(c.x + HALF, 0.038, c.z, 0.14, 1.05, crown_col)
+			elif straight_ew_seam:
+				kit.add_ground_rect(c.x, 0.038, c.z + HALF, 1.05, 0.14, crown_col)
+			elif is_single_ns:
+				kit.add_ground_rect(c.x, 0.038, c.z, 0.10, 0.90, crown_col)
+			elif is_single_ew:
+				kit.add_ground_rect(c.x, 0.038, c.z, 0.90, 0.10, crown_col)
+			if not open_w:
+				kit.add_ground_rect(x0 + 0.08, 0.037, (z0 + z1) * 0.5, 0.07, z1 - z0, edge_col)
+			if not open_e:
+				kit.add_ground_rect(x1 - 0.08, 0.037, (z0 + z1) * 0.5, 0.07, z1 - z0, edge_col)
+			if not open_n:
+				kit.add_ground_rect((x0 + x1) * 0.5, 0.037, z0 + 0.08, x1 - x0, 0.07, edge_col)
+			if not open_s:
+				kit.add_ground_rect((x0 + x1) * 0.5, 0.037, z1 - 0.08, x1 - x0, 0.07, edge_col)
+
+		else:
+			# PAVED ASPHALT: raised concrete curbs, white fog lines, yellow dashed 2-lane centerlines & streetlamps
+			const CURB_H := 0.08
+			const CURB_W := 0.18
+			if not open_w:
+				kit.add_box(c.x - HALF + CURB_W * 0.5, 0.018, c.z, CURB_W, CURB_H, CS, DesertPalette.CONCRETE)
+				kit.add_ground_rect(x0 + 0.12, 0.039, (z0 + z1) * 0.5, 0.08, z1 - z0, DesertPalette.ROAD_WHITE)
+			if not open_e:
+				kit.add_box(c.x + HALF - CURB_W * 0.5, 0.018, c.z, CURB_W, CURB_H, CS, DesertPalette.CONCRETE)
+				kit.add_ground_rect(x1 - 0.12, 0.039, (z0 + z1) * 0.5, 0.08, z1 - z0, DesertPalette.ROAD_WHITE)
+			if not open_n:
+				kit.add_box(c.x, 0.018, c.z - HALF + CURB_W * 0.5, CS, CURB_H, CURB_W, DesertPalette.CONCRETE)
+				kit.add_ground_rect((x0 + x1) * 0.5, 0.039, z0 + 0.12, x1 - x0, 0.08, DesertPalette.ROAD_WHITE)
+			if not open_s:
+				kit.add_box(c.x, 0.018, c.z + HALF - CURB_W * 0.5, CS, CURB_H, CURB_W, DesertPalette.CONCRETE)
+				kit.add_ground_rect((x0 + x1) * 0.5, 0.039, z1 - 0.12, x1 - x0, 0.08, DesertPalette.ROAD_WHITE)
+
+			# Yellow dashed center divider right down the 2-lane seam (emitted once by west/north tile)
+			if straight_ns_seam:
+				kit.add_ground_rect(c.x + HALF, 0.042, c.z, 0.11, 1.12, DesertPalette.ROAD_YELLOW)
+			elif straight_ew_seam:
+				kit.add_ground_rect(c.x, 0.042, c.z + HALF, 1.12, 0.11, DesertPalette.ROAD_YELLOW)
+			elif is_single_ns:
+				kit.add_ground_rect(c.x, 0.042, c.z, 0.09, 0.92, DesertPalette.ROAD_YELLOW)
+			elif is_single_ew:
+				kit.add_ground_rect(c.x, 0.042, c.z, 0.92, 0.09, DesertPalette.ROAD_YELLOW)
+
+			# Stop bar at Route 163 southbound exit lane
+			if cell.y == OutpostLayout.HIGHWAY_ENTRY_ROW_Z and is_ns_west:
+				kit.add_ground_rect(c.x + 0.05, 0.043, c.z + 0.65, 1.45, 0.16, DesertPalette.ROAD_WHITE)
+
+			# Outer-curb streetlamps every 4 cells along paved roads (never blocking driveways)
+			if not open_n and (has_w or has_e) and posmod(cell.x, 4) == 0:
+				add_street_lamp(kit, Vector3(c.x, 0.0, c.z - HALF + 0.10))
+			elif not open_w and (has_n or has_s) and posmod(cell.y, 4) == 0:
+				add_street_lamp(kit, Vector3(c.x - HALF + 0.10, 0.0, c.z))
+
+	# 6. Wide flared Route 163 highway bellmouth junctions (grouped by contiguous entry span)
+	for cl in road_net.highway_junction_clusters():
+		var cl_cells: Array = cl["cells"]
+		if cl_cells.is_empty():
+			continue
+		var min_x: int = cl["min_x"]
+		var max_x: int = cl["max_x"]
+		var best_tier := GameCatalog.RoadTier.DIRT
+		for c_v in cl_cells:
+			best_tier = maxi(best_tier, road_net.tile_tier(c_v))
+
+		var j_margin := 0.24 if best_tier == GameCatalog.RoadTier.DIRT else (0.18 if best_tier == GameCatalog.RoadTier.GRAVEL else 0.20)
+		var j_sh := Color("cfa977") if best_tier == GameCatalog.RoadTier.DIRT else (Color("b0a18e") if best_tier == GameCatalog.RoadTier.GRAVEL else DesertPalette.ASPHALT_SHOULDER)
+		var j_sf := Color("b28b59") if best_tier == GameCatalog.RoadTier.DIRT else (Color("867b6f") if best_tier == GameCatalog.RoadTier.GRAVEL else DesertPalette.ASPHALT)
+
+		var top_z := float(OutpostLayout.HIGHWAY_ENTRY_ROW_Z) * CS + HALF # 11.0
+		var bot_z := 11.82 if best_tier == GameCatalog.RoadTier.PAVED else 11.54
+		var y_sf := 0.0395 if best_tier == GameCatalog.RoadTier.PAVED else 0.032
+		var tx0 := float(min_x) * CS - HALF + j_margin
+		var tx1 := float(max_x) * CS + HALF - j_margin
+		var flare_w := 1.18
+
+		# Shoulder flare
+		var sh_poly: Array[Vector3] = [
+			Vector3(tx0 - j_margin, 0.021, top_z),
+			Vector3(tx0 - flare_w - j_margin, 0.021, 11.48),
+			Vector3(tx1 + flare_w + j_margin, 0.021, 11.48),
+			Vector3(tx1 + j_margin, 0.021, top_z),
+		]
+		kit.add_ground_poly(sh_poly, j_sh)
+
+		# Road surface bellmouth (for PAVED, cleanly bridges & interrupts Route 163 north white fog line!)
+		var sf_poly: Array[Vector3] = [
+			Vector3(tx0, y_sf, top_z),
+			Vector3(tx0 - flare_w, y_sf, bot_z),
+			Vector3(tx1 + flare_w, y_sf, bot_z),
+			Vector3(tx1, y_sf, top_z),
+		]
+		kit.add_ground_poly(sf_poly, j_sf)
+
+		# Yellow center dash extending into paved junction throat
+		if best_tier == GameCatalog.RoadTier.PAVED and max_x > min_x:
+			var jcx := float(min_x + max_x) * 0.5 * CS
+			kit.add_ground_rect(jcx, 0.042, top_z + 0.28, 0.11, 0.45, DesertPalette.ROAD_YELLOW)

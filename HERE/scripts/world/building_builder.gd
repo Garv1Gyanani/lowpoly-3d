@@ -5,7 +5,7 @@ extends RefCounted
 ## and 5 Decorations — built procedurally with MeshKit for zero-flicker GPU rendering.
 
 
-static func build_plot_node(btype: int, level: int, anim_time: float = 0.0, material_override: Material = null) -> Node3D:
+static func build_plot_node(btype: int, level: int, anim_time: float = 0.0, material_override: Material = null, has_rooftop_solar: bool = false) -> Node3D:
 	var kit := MeshKit.new()
 	match btype:
 		GameCatalog.BusinessType.VENDOR_STALL:
@@ -27,6 +27,8 @@ static func build_plot_node(btype: int, level: int, anim_time: float = 0.0, mate
 			_build_desert_motel(kit, level)
 		GameCatalog.BusinessType.LOOKOUT_CAMP:
 			_build_lookout_camp(kit, level, anim_time)
+	if has_rooftop_solar:
+		PowerBuilder.add_rooftop_solar(kit, btype, level)
 	return kit.build_node("Building_%d_Lv%d" % [btype, level], material_override == null, material_override)
 
 
@@ -131,11 +133,11 @@ static func add_parking_lot(kit: MeshKit, lot: Dictionary, is_ghost: bool = fals
 	var wd := float(sz.y) * OutpostLayout.GRID_CELL_SIZE - 0.14
 	var c := OutpostLayout.footprint_center(lot["grid_x"], lot["grid_z"], sz.x, sz.y)
 
-	var base_col := Color("b89668") if kind == GameCatalog.ParkingLotKind.DIRT_PULL_OFF else (Color("8c7e70") if kind == GameCatalog.ParkingLotKind.GRAVEL_LOT else Color("5d5650"))
+	var base_col := Color("b89668") if kind == GameCatalog.ParkingLotKind.DIRT_PULL_OFF else (Color("8c7e70") if kind == GameCatalog.ParkingLotKind.GRAVEL_LOT else DesertPalette.ASPHALT)
 	var border_col := Color("9e7c52") if kind == GameCatalog.ParkingLotKind.DIRT_PULL_OFF else (Color("756a5e") if kind == GameCatalog.ParkingLotKind.GRAVEL_LOT else DesertPalette.CONCRETE)
 
-	kit.add_ground_rect(c.x, 0.022, c.z, ww + 0.18, wd + 0.18, border_col)
-	kit.add_ground_rect(c.x, 0.031, c.z, ww, wd, base_col)
+	kit.add_ground_rect(c.x, 0.020, c.z, ww + 0.18, wd + 0.18, border_col)
+	kit.add_ground_rect(c.x, 0.030, c.z, ww, wd, base_col)
 
 	var side := lot_effective_side(lot)
 	var dims := lot_oriented_dims(lot)
@@ -144,39 +146,71 @@ static func add_parking_lot(kit: MeshKit, lot: Dictionary, is_ghost: bool = fals
 	var u := lot_bay_row_axis(side)
 	var f := lot_pull_in_dir(side)
 	var count: int = spec["spaces"]
-	var usable_span := span - 0.36
+	var usable_span := span - 0.52
 	var bay_pitch := usable_span / float(count)
+	var is_ns := side == GameCatalog.LotEntrySide.SOUTH or side == GameCatalog.LotEntrySide.NORTH
+	var bay_yaw := lot_parked_yaw(side)
 
+	# Seamless wide driveway apron bridging from lot entry throat onto the adjacent road
 	if lot.get("is_connected", false):
-		var apron := c - f * (depth * 0.5 + 0.11)
-		var is_ns := side == GameCatalog.LotEntrySide.SOUTH or side == GameCatalog.LotEntrySide.NORTH
-		kit.add_ground_rect(apron.x, 0.035, apron.z, span * 0.88 if is_ns else 0.24, 0.24 if is_ns else span * 0.88, base_col)
+		var apron := c - f * (depth * 0.5 + 0.16)
+		var apron_span := span * 0.88
+		kit.add_ground_rect(apron.x, 0.032, apron.z, apron_span if is_ns else 0.44, 0.44 if is_ns else apron_span, base_col)
+
+	# Internal entry maneuvering apron strip (front ~1.95m) & deep vehicle stalls (back ~3.50m)
+	var back_buf := 0.56
+	var apron_depth := minf(1.95, depth * 0.33)
+	var stall_start := -depth * 0.5 + apron_depth
+	var stall_end := depth * 0.5 - back_buf
+	var stall_len := maxf(2.2, stall_end - stall_start)
+	var stall_mid_f := (stall_start + stall_end) * 0.5
 
 	var stop_col := DesertPalette.WOOD if kind == GameCatalog.ParkingLotKind.DIRT_PULL_OFF else DesertPalette.CONCRETE
-	var stripe_col := Color("9a784e") if kind == GameCatalog.ParkingLotKind.DIRT_PULL_OFF else (Color("c9beb0") if kind == GameCatalog.ParkingLotKind.GRAVEL_LOT else Color("e5dec9"))
-	var bay_yaw := lot_parked_yaw(side)
-	var stop_w := clampf(bay_pitch * 0.64, 0.70, 1.15)
+	var stripe_col := Color("9a784e") if kind == GameCatalog.ParkingLotKind.DIRT_PULL_OFF else (Color("cfc5b6") if kind == GameCatalog.ParkingLotKind.GRAVEL_LOT else DesertPalette.ROAD_WHITE)
+	var stop_w := clampf(bay_pitch * 0.58, 0.82, 1.28)
 	for i in range(count):
 		var u_off := ((float(i) + 0.5) / float(count) - 0.5) * usable_span
-		var sp := c + u * u_off + f * (depth * 0.5 - 0.42)
+		var sp := c + u * u_off + f * (stall_end - 0.16)
 		kit.push_tx(sp, bay_yaw)
-		kit.add_box(0, 0.03, 0, 0.16, 0.12, stop_w, stop_col)
+		kit.add_box(0, 0.03, 0, 0.17, 0.12, stop_w, stop_col)
 		kit.pop_tx()
 
 	if not is_ghost:
-		var stripe_len := depth * 0.72
-		var is_ns := side == GameCatalog.LotEntrySide.SOUTH or side == GameCatalog.LotEntrySide.NORTH
+		# Crisp bay divider stripes
 		for i in range(count + 1):
 			var u_off := (float(i) / float(count) - 0.5) * usable_span
-			var lc := c + u * u_off + f * (depth * 0.06)
-			kit.add_ground_rect(lc.x, 0.042, lc.z, 0.08 if is_ns else stripe_len, stripe_len if is_ns else 0.08, stripe_col)
+			var lc := c + u * u_off + f * stall_mid_f
+			kit.add_ground_rect(lc.x, 0.041, lc.z, 0.09 if is_ns else stall_len, stall_len if is_ns else 0.09, stripe_col)
+
+		# Subtle entry throat guide strip on paved & gravel lots
+		if kind != GameCatalog.ParkingLotKind.DIRT_PULL_OFF:
+			var apron_mid := c - f * (depth * 0.5 - apron_depth * 0.5)
+			var apron_tint := Color("7e7265") if kind == GameCatalog.ParkingLotKind.GRAVEL_LOT else Color("423f3e")
+			kit.add_ground_rect(apron_mid.x, 0.034, apron_mid.z, (span - 0.44) if is_ns else (apron_depth - 0.25), (apron_depth - 0.25) if is_ns else (span - 0.44), apron_tint)
+
+		# Back sidewalk & raised side curbs on Paved Plaza Lot (or rustic timber rails on Dirt/Gravel)
 		if kind == GameCatalog.ParkingLotKind.PAVED_LOT:
-			var rail := c + f * (depth * 0.5 - 0.10)
-			kit.push_tx(rail, bay_yaw)
-			kit.add_box(0, 0.03, 0, 0.18, 0.14, span - 0.24, DesertPalette.CONCRETE)
+			var walk := c + f * (depth * 0.5 - back_buf * 0.5)
+			kit.push_tx(walk, bay_yaw)
+			kit.add_box(0, 0.02, 0, back_buf - 0.06, 0.09, span - 0.16, DesertPalette.CONCRETE)
+			kit.pop_tx()
+			for sgn: float in [-1.0, 1.0]:
+				var side_curb: Vector3 = c + u * (sgn * (span * 0.5 - 0.10))
+				kit.push_tx(side_curb, bay_yaw)
+				kit.add_box(0, 0.02, 0, depth - 0.18, 0.09, 0.16, DesertPalette.CONCRETE)
+				kit.pop_tx()
+			# Entry curb-cut flares on left & right of apron opening
+			for sgn: float in [-1.0, 1.0]:
+				var post: Vector3 = c + u * (sgn * (span * 0.5 - 0.14)) - f * (depth * 0.5 - 0.14)
+				kit.add_frustum(post.x, 0.09, post.z, 0.08, 0.08, 0.07, 0.07, 0.46, 6, DesertPalette.GOLD, DesertPalette.CREAM)
+		elif kind == GameCatalog.ParkingLotKind.GRAVEL_LOT:
+			var back_rail := c + f * (depth * 0.5 - 0.16)
+			kit.push_tx(back_rail, bay_yaw)
+			kit.add_box(0, 0.03, 0, 0.18, 0.14, span - 0.30, DesertPalette.WOOD)
 			kit.pop_tx()
 
-		var corner := c - u * (span * 0.5 + 0.06) + f * (depth * 0.5 - 0.12)
+		# Parking sign & warm lot streetlamps
+		var corner := c - u * (span * 0.5 - 0.10) + f * (depth * 0.5 - 0.22)
 		var sign_yaw := bay_yaw - PI * 0.5
 		if kind == GameCatalog.ParkingLotKind.DIRT_PULL_OFF:
 			kit.push_tx(corner, sign_yaw)
@@ -188,7 +222,7 @@ static func add_parking_lot(kit: MeshKit, lot: Dictionary, is_ghost: bool = fals
 		else:
 			DesertTerrainBuilder.add_street_lamp(kit, corner)
 			if kind == GameCatalog.ParkingLotKind.PAVED_LOT:
-				var other := c + u * (span * 0.5 + 0.06) + f * (depth * 0.5 - 0.12)
+				var other := c + u * (span * 0.5 - 0.10) + f * (depth * 0.5 - 0.22)
 				DesertTerrainBuilder.add_street_lamp(kit, other)
 
 

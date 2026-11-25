@@ -9,7 +9,7 @@ extends CanvasLayer
 var state: GameState
 var camera: DesertCamera
 
-enum TrayMode { NONE, BUILD, UPGRADE }
+enum TrayMode { NONE, BUILD, UPGRADE, CREW }
 var _tray_mode: int = TrayMode.NONE
 var _menu_open := false
 
@@ -24,26 +24,54 @@ var _offline_btn: Button
 var _cash_lbl: Label
 var _rate_lbl: Label
 var _stage_btn: Button
+var _clock_lbl: Label
+var _speed_btn: Button
+var _power_btn: Button
+var _water_btn: Button
 var _milestone_btn: Button
 var _menu_badge: Label
+var _lens_banner: Label
+var _lens_btns: Dictionary = {} # MapLens -> Button
 
 var _bottom_host: MarginContainer
 var _tray_panel: PanelContainer
 var _tray_title: Label
+var _tray_filters_row: HBoxContainer
+var _build_filter := "all"
 var _tray_list: HBoxContainer
+var _inspector: StructureInspector
 var _play_bar: HBoxContainer
 var _serve_btn: Button
 var _build_dot: ColorRect
 var _roads_dot: ColorRect
+var _crew_dot: ColorRect
 var _upgrade_dot: ColorRect
 
 var _road_bar: PanelContainer
 var _road_hint: Label
 var _road_junc: Label
 var _road_tier_btns: Array[Button] = []
+var _road_width_btn: Button
 var _road_erase_btn: Button
 var _road_clear_btn: Button
 var _road_confirm_btn: Button
+
+var _pole_bar: PanelContainer
+var _pole_hint: Label
+var _pole_kind_btns: Array[Button] = []
+var _pole_erase_btn: Button
+
+var _conduit_bar: PanelContainer
+var _conduit_hint: Label
+var _conduit_erase_btn: Button
+var _conduit_clear_btn: Button
+var _conduit_confirm_btn: Button
+
+var _pipe_bar: PanelContainer
+var _pipe_hint: Label
+var _pipe_erase_btn: Button
+var _pipe_clear_btn: Button
+var _pipe_confirm_btn: Button
 
 var _place_bar: PanelContainer
 var _place_badge: Label
@@ -64,6 +92,9 @@ var _menu_milestones_box: VBoxContainer
 
 var _bubble_pool: Array[Button] = []
 var _popup_pool: Array[Label] = []
+var _hold_ring: Control
+var _hold_ring_pos := Vector2.ZERO
+var _hold_ring_prog := 0.0
 var _hud_dirty := true
 
 
@@ -75,6 +106,7 @@ func setup(game_state: GameState, cam: DesertCamera) -> void:
 	_build_ui()
 	state.hud_changed.connect(func(): _hud_dirty = true)
 	state.world_layout_changed.connect(func(): _hud_dirty = true)
+	state.overlay_changed.connect(func(): _hud_dirty = true)
 	_refresh_hud()
 
 
@@ -86,6 +118,30 @@ func close_tray_if_open() -> void:
 	if _tray_mode != TrayMode.NONE:
 		_tray_mode = TrayMode.NONE
 		_refresh_hud()
+
+
+func set_hold_indicator(screen_pos: Vector2, progress: float) -> void:
+	_hold_ring_pos = screen_pos
+	_hold_ring_prog = clampf(progress, 0.0, 1.0)
+	if _hold_ring != null:
+		_hold_ring.visible = _hold_ring_prog > 0.0
+		_hold_ring.queue_redraw()
+
+
+func clear_hold_indicator() -> void:
+	if _hold_ring_prog > 0.0:
+		_hold_ring_prog = 0.0
+		if _hold_ring != null:
+			_hold_ring.visible = false
+			_hold_ring.queue_redraw()
+
+
+func _draw_hold_ring() -> void:
+	if _hold_ring == null or _hold_ring_prog <= 0.0:
+		return
+	var r := lerpf(16.0, 30.0, _hold_ring_prog)
+	_hold_ring.draw_arc(_hold_ring_pos, r, 0.0, TAU, 28, Color(0.18, 0.11, 0.06, 0.55), 5.0, true)
+	_hold_ring.draw_arc(_hold_ring_pos, r, -PI * 0.5, -PI * 0.5 + TAU * _hold_ring_prog, 28, DesertPalette.UI_GOLD_TOP, 3.5, true)
 
 
 # --- Styled Widget Helpers ---
@@ -159,6 +215,13 @@ func _build_ui() -> void:
 	_popups_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(_popups_layer)
 
+	_hold_ring = Control.new()
+	_hold_ring.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_hold_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hold_ring.visible = false
+	_hold_ring.draw.connect(_draw_hold_ring)
+	root.add_child(_hold_ring)
+
 	# 2. Top HUD Bar
 	_top_bar = MarginContainer.new()
 	_top_bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
@@ -205,6 +268,42 @@ func _build_ui() -> void:
 	_stage_btn.pressed.connect(_open_menu)
 	top_row.add_child(_stage_btn)
 
+	# Clock & Sim Speed Pill
+	var clock_panel := PanelContainer.new()
+	clock_panel.add_theme_stylebox_override("panel", _make_box(DesertPalette.UI_WOOD_FRAME, DesertPalette.UI_WOOD_RIM, 14, 2, 2))
+	top_row.add_child(clock_panel)
+	var clk_hb := HBoxContainer.new()
+	clk_hb.add_theme_constant_override("separation", 6)
+	clock_panel.add_child(clk_hb)
+	_clock_lbl = Label.new()
+	_style_label(_clock_lbl, Color("fff2d4"), 11, true)
+	clk_hb.add_child(_clock_lbl)
+	_speed_btn = Button.new()
+	_speed_btn.custom_minimum_size = Vector2(36, 26)
+	_style_button(_speed_btn, DesertPalette.UI_GOLD_TOP, DesertPalette.UI_GOLD_BASE, DesertPalette.UI_INK, 10, 9)
+	_speed_btn.pressed.connect(func(): state.cycle_sim_speed())
+	clk_hb.add_child(_speed_btn)
+
+	# Compact Power Grid Status Pill (toggles PWR lens)
+	_power_btn = Button.new()
+	_power_btn.visible = false
+	_style_button(_power_btn, DesertPalette.UI_WOOD_FRAME, DesertPalette.UI_WOOD_DEEP, DesertPalette.UI_GOLD_TOP, 10, 14)
+	_power_btn.pressed.connect(func():
+		var nxt := GameCatalog.MapLens.NONE if state.active_lens == GameCatalog.MapLens.POWER else GameCatalog.MapLens.POWER
+		state.set_map_lens(nxt)
+	)
+	top_row.add_child(_power_btn)
+
+	# Compact Water Pipe Status Pill (toggles H2O lens)
+	_water_btn = Button.new()
+	_water_btn.visible = false
+	_style_button(_water_btn, DesertPalette.UI_WOOD_FRAME, DesertPalette.UI_WOOD_DEEP, Color("8ee6f5"), 10, 14)
+	_water_btn.pressed.connect(func():
+		var nxt := GameCatalog.MapLens.NONE if state.active_lens == GameCatalog.MapLens.WATER else GameCatalog.MapLens.WATER
+		state.set_map_lens(nxt)
+	)
+	top_row.add_child(_water_btn)
+
 	# Milestone pill
 	_milestone_btn = Button.new()
 	_style_button(_milestone_btn, DesertPalette.UI_WOOD_BODY, DesertPalette.UI_WOOD_DEEP, Color("fff2d4"), 11, 16)
@@ -232,6 +331,14 @@ func _build_ui() -> void:
 	_style_label(_menu_badge, DesertPalette.UI_INK, 10, true)
 	gear_wrap.add_child(_menu_badge)
 
+	# Active map lens banner
+	_lens_banner = Label.new()
+	_lens_banner.visible = false
+	_lens_banner.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_lens_banner.add_theme_stylebox_override("normal", _make_box(DesertPalette.UI_WOOD_DEEP, DesertPalette.UI_GOLD_TOP, 12, 2, 2))
+	_style_label(_lens_banner, Color("fff4dc"), 11, true)
+	top_col.add_child(_lens_banner)
+
 	# Offline welcome back banner
 	_offline_btn = Button.new()
 	_offline_btn.visible = false
@@ -244,13 +351,13 @@ func _build_ui() -> void:
 	)
 	top_col.add_child(_offline_btn)
 
-	# 3. Right-edge Camera Controls (Rotate -90, Rotate +90, Tilt Preset, Home)
+	# 3. Right-edge Camera Controls + Map Lens Strip
 	var cam_box := VBoxContainer.new()
 	cam_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	cam_box.offset_left = -58
 	cam_box.offset_right = -12
 	cam_box.offset_top = 80
-	cam_box.add_theme_constant_override("separation", 8)
+	cam_box.add_theme_constant_override("separation", 7)
 	root.add_child(cam_box)
 	for spec in [
 		["↺", func(): camera.rotate_quarter(-1)],
@@ -260,10 +367,27 @@ func _build_ui() -> void:
 	]:
 		var cb := Button.new()
 		cb.text = spec[0]
-		cb.custom_minimum_size = Vector2(42, 40)
+		cb.custom_minimum_size = Vector2(44, 38)
 		_style_button(cb, DesertPalette.UI_WOOD_BODY, DesertPalette.UI_WOOD_DEEP, Color("fff2d4"), 13, 12)
 		cb.pressed.connect(spec[1])
 		cam_box.add_child(cb)
+
+	var lens_div := Control.new()
+	lens_div.custom_minimum_size = Vector2(0, 6)
+	cam_box.add_child(lens_div)
+
+	for lspec in GameCatalog.MAP_LENSES:
+		var lid: int = int(lspec["id"])
+		var lb := Button.new()
+		lb.text = str(lspec["short"])
+		lb.tooltip_text = "%s — %s" % [str(lspec["name"]), str(lspec["hint"])]
+		lb.custom_minimum_size = Vector2(44, 32)
+		lb.pressed.connect(func():
+			var next_l := GameCatalog.MapLens.NONE if (state.active_lens == lid and lid != GameCatalog.MapLens.NONE) else lid
+			state.set_map_lens(next_l)
+		)
+		cam_box.add_child(lb)
+		_lens_btns[lid] = lb
 
 	# 4. Bottom Controls Host
 	_bottom_host = MarginContainer.new()
@@ -289,10 +413,14 @@ func _build_ui() -> void:
 	tray_vb.add_theme_constant_override("separation", 8)
 	_tray_panel.add_child(tray_vb)
 	var tray_hdr := HBoxContainer.new()
+	tray_hdr.add_theme_constant_override("separation", 8)
 	tray_vb.add_child(tray_hdr)
 	_tray_title = Label.new()
 	_style_label(_tray_title, DesertPalette.UI_INK, 12, true)
 	tray_hdr.add_child(_tray_title)
+	_tray_filters_row = HBoxContainer.new()
+	_tray_filters_row.add_theme_constant_override("separation", 5)
+	tray_hdr.add_child(_tray_filters_row)
 	var tsp := Control.new()
 	tsp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tray_hdr.add_child(tsp)
@@ -311,6 +439,11 @@ func _build_ui() -> void:
 	_tray_list = HBoxContainer.new()
 	_tray_list.add_theme_constant_override("separation", 8)
 	tray_scroll.add_child(_tray_list)
+
+	# Modular Tabbed Structure Inspector (opens on single tap of built business or parking lot)
+	_inspector = StructureInspector.new()
+	_inspector.setup(state, _display_font, _ui_font)
+	bot_vb.add_child(_inspector)
 
 	# Play Bottom Row: BUILD | ROADS   [SELL/SERVE +$X]   UPGRADE
 	_play_bar = HBoxContainer.new()
@@ -345,12 +478,20 @@ func _build_ui() -> void:
 	sp_r.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_play_bar.add_child(sp_r)
 
+	var c_wrap := _make_corner_btn("CREW", func(): _toggle_tray(TrayMode.CREW))
+	_crew_dot = c_wrap[1]
+	_play_bar.add_child(c_wrap[0])
+
 	var u_wrap := _make_corner_btn("UPGRADE", func(): _toggle_tray(TrayMode.UPGRADE))
 	_upgrade_dot = u_wrap[1]
 	_play_bar.add_child(u_wrap[0])
 
 	# Road Line Tool Bar
 	_build_road_bar(bot_vb)
+	# Power Pole, Underground Conduit & Water Pipe Bars
+	_build_pole_bar(bot_vb)
+	_build_conduit_bar(bot_vb)
+	_build_water_pipe_bar(bot_vb)
 	# Placement Confirm Bar
 	_build_placement_bar(bot_vb)
 	# Buy Land Bar
@@ -406,6 +547,11 @@ func _build_road_bar(parent: VBoxContainer) -> void:
 		tb.pressed.connect(func(): state.set_road_brush(t_val))
 		tiers_row.add_child(tb)
 		_road_tier_btns.append(tb)
+	_road_width_btn = Button.new()
+	_road_width_btn.text = "2-LANE"
+	_road_width_btn.pressed.connect(func(): state.set_road_two_lane(not state.road_two_lane))
+	tiers_row.add_child(_road_width_btn)
+
 	_road_erase_btn = Button.new()
 	_road_erase_btn.text = "ERASE"
 	_road_erase_btn.pressed.connect(func(): state.set_road_erase(not state.road_erase_mode))
@@ -430,6 +576,120 @@ func _build_road_bar(parent: VBoxContainer) -> void:
 	_style_button(done_btn, DesertPalette.UI_WOOD_BODY, DesertPalette.UI_WOOD_DEEP, Color.WHITE, 11, 12)
 	done_btn.pressed.connect(func(): state.cancel_tool_mode())
 	act_row.add_child(done_btn)
+
+
+func _build_pole_bar(parent: VBoxContainer) -> void:
+	_pole_bar = PanelContainer.new()
+	_pole_bar.visible = false
+	_pole_bar.add_theme_stylebox_override("panel", _make_box(DesertPalette.UI_PARCHMENT, DesertPalette.UI_WOOD_FRAME, 18, 3, 4))
+	parent.add_child(_pole_bar)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 8)
+	_pole_bar.add_child(vb)
+
+	_pole_hint = Label.new()
+	_style_label(_pole_hint, DesertPalette.UI_INK, 12, false)
+	vb.add_child(_pole_hint)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	vb.add_child(row)
+	for pk in [GameCatalog.PowerLineKind.WOOD_POLE, GameCatalog.PowerLineKind.STEEL_TOWER]:
+		var pb := Button.new()
+		pb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var pk_val: int = pk
+		pb.pressed.connect(func(): state.set_pole_kind(pk_val))
+		row.add_child(pb)
+		_pole_kind_btns.append(pb)
+
+	_pole_erase_btn = Button.new()
+	_pole_erase_btn.text = "ERASE"
+	_pole_erase_btn.pressed.connect(func(): state.set_pole_erase(not state.pole_erase_mode))
+	row.add_child(_pole_erase_btn)
+
+	var done_b := Button.new()
+	done_b.text = "DONE"
+	_style_button(done_b, DesertPalette.UI_GREEN_TOP, DesertPalette.UI_GREEN_BASE, Color.WHITE, 11, 12)
+	done_b.pressed.connect(func(): state.cancel_tool_mode())
+	row.add_child(done_b)
+
+
+func _build_conduit_bar(parent: VBoxContainer) -> void:
+	_conduit_bar = PanelContainer.new()
+	_conduit_bar.visible = false
+	_conduit_bar.add_theme_stylebox_override("panel", _make_box(DesertPalette.UI_PARCHMENT, DesertPalette.UI_WOOD_FRAME, 18, 3, 4))
+	parent.add_child(_conduit_bar)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 8)
+	_conduit_bar.add_child(vb)
+
+	_conduit_hint = Label.new()
+	_style_label(_conduit_hint, DesertPalette.UI_INK, 12, false)
+	vb.add_child(_conduit_hint)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	vb.add_child(row)
+	_conduit_erase_btn = Button.new()
+	_conduit_erase_btn.text = "ERASE"
+	_conduit_erase_btn.pressed.connect(func(): state.set_conduit_erase(not state.conduit_erase_mode))
+	row.add_child(_conduit_erase_btn)
+
+	_conduit_clear_btn = Button.new()
+	_conduit_clear_btn.text = "CLEAR"
+	_style_button(_conduit_clear_btn, DesertPalette.UI_WOOD_BODY, DesertPalette.UI_WOOD_DEEP, Color("fff2d4"), 11, 12)
+	_conduit_clear_btn.pressed.connect(func(): state.clear_conduit_line())
+	row.add_child(_conduit_clear_btn)
+
+	_conduit_confirm_btn = Button.new()
+	_conduit_confirm_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_conduit_confirm_btn.pressed.connect(func(): state.confirm_conduit_line())
+	row.add_child(_conduit_confirm_btn)
+
+	var done_b := Button.new()
+	done_b.text = "DONE"
+	_style_button(done_b, DesertPalette.UI_WOOD_BODY, DesertPalette.UI_WOOD_DEEP, Color.WHITE, 11, 12)
+	done_b.pressed.connect(func(): state.cancel_tool_mode())
+	row.add_child(done_b)
+
+
+func _build_water_pipe_bar(parent: VBoxContainer) -> void:
+	_pipe_bar = PanelContainer.new()
+	_pipe_bar.visible = false
+	_pipe_bar.add_theme_stylebox_override("panel", _make_box(DesertPalette.UI_PARCHMENT, DesertPalette.UI_WOOD_FRAME, 18, 3, 4))
+	parent.add_child(_pipe_bar)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 8)
+	_pipe_bar.add_child(vb)
+
+	_pipe_hint = Label.new()
+	_style_label(_pipe_hint, DesertPalette.UI_INK, 12, false)
+	vb.add_child(_pipe_hint)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	vb.add_child(row)
+	_pipe_erase_btn = Button.new()
+	_pipe_erase_btn.text = "ERASE"
+	_pipe_erase_btn.pressed.connect(func(): state.set_water_pipe_erase(not state.water_pipe_erase_mode))
+	row.add_child(_pipe_erase_btn)
+
+	_pipe_clear_btn = Button.new()
+	_pipe_clear_btn.text = "CLEAR"
+	_style_button(_pipe_clear_btn, DesertPalette.UI_WOOD_BODY, DesertPalette.UI_WOOD_DEEP, Color("fff2d4"), 11, 12)
+	_pipe_clear_btn.pressed.connect(func(): state.clear_water_pipe_line())
+	row.add_child(_pipe_clear_btn)
+
+	_pipe_confirm_btn = Button.new()
+	_pipe_confirm_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_pipe_confirm_btn.pressed.connect(func(): state.confirm_water_pipe_line())
+	row.add_child(_pipe_confirm_btn)
+
+	var done_b := Button.new()
+	done_b.text = "DONE"
+	_style_button(done_b, DesertPalette.UI_WOOD_BODY, DesertPalette.UI_WOOD_DEEP, Color.WHITE, 11, 12)
+	done_b.pressed.connect(func(): state.cancel_tool_mode())
+	row.add_child(done_b)
 
 
 func _build_placement_bar(parent: VBoxContainer) -> void:
@@ -644,12 +904,14 @@ func _build_menu_modal(root: Control) -> void:
 func _toggle_tray(mode: int) -> void:
 	if state.tool_mode != GameCatalog.WorldToolMode.PLAY:
 		state.cancel_tool_mode()
+	state.clear_selected_plot()
 	_tray_mode = TrayMode.NONE if _tray_mode == mode else mode
 	_refresh_hud()
 
 
 func _open_menu() -> void:
 	_tray_mode = TrayMode.NONE
+	state.clear_selected_plot()
 	_menu_open = true
 	_menu_backdrop.visible = true
 	_refresh_hud()
@@ -687,6 +949,79 @@ func _refresh_hud() -> void:
 	_rate_lbl.text = "+%s/min" % GameCatalog.format_cash(inc) if inc > 0.0 else "Tap cart to earn"
 	_stage_btn.text = "STG %d" % state.outpost_stage()
 
+	_clock_lbl.text = state.sim_clock.hud_label()
+	_speed_btn.text = state.sim_clock.speed_label()
+	var paused := state.sim_clock.is_paused()
+	_style_button(
+		_speed_btn,
+		DesertPalette.UI_TERRA_TOP if paused else (DesertPalette.UI_GREEN_TOP if state.sim_clock.sim_speed >= 1.5 else DesertPalette.UI_GOLD_TOP),
+		DesertPalette.UI_TERRA_BASE if paused else (DesertPalette.UI_GREEN_BASE if state.sim_clock.sim_speed >= 1.5 else DesertPalette.UI_GOLD_BASE),
+		Color.WHITE if paused or state.sim_clock.sim_speed >= 1.5 else DesertPalette.UI_INK,
+		10,
+		9
+	)
+
+	# Top-bar live Power Grid pill
+	var pn := state.power_network
+	var show_pwr := pn.total_demand_kw > 0.0 or pn.total_gen_kw > 0.0 or not state.utilities.is_empty()
+	_power_btn.visible = show_pwr
+	if show_pwr:
+		var bat_tag := ""
+		if pn.total_battery_cap > 0.0:
+			bat_tag = " · BAT %d%%" % roundi((pn.total_battery_stored / pn.total_battery_cap) * 100.0)
+		_power_btn.text = "⚡ %.0f/%.0f kW%s" % [pn.total_gen_kw, pn.total_demand_kw, bat_tag]
+		var low := pn.brownout_count > 0
+		_style_button(
+			_power_btn,
+			DesertPalette.UI_TERRA_TOP if low else DesertPalette.UI_WOOD_FRAME,
+			DesertPalette.UI_TERRA_BASE if low else DesertPalette.UI_WOOD_DEEP,
+			Color.WHITE if low else DesertPalette.UI_GOLD_TOP,
+			10,
+			14
+		)
+
+	# Top-bar live Water Network pill
+	var wn := state.water_network
+	var show_h2o := wn.total_demand > 0.0 or wn.total_supply > 0.0
+	_water_btn.visible = show_h2o
+	if show_h2o:
+		_water_btn.text = "💧 %.0f/%.0f" % [wn.total_supply, wn.total_demand]
+		var dry := wn.dry_count > 0
+		_style_button(
+			_water_btn,
+			DesertPalette.UI_TERRA_TOP if dry else DesertPalette.UI_WOOD_FRAME,
+			DesertPalette.UI_TERRA_BASE if dry else DesertPalette.UI_WOOD_DEEP,
+			Color.WHITE if dry else Color("8ee6f5"),
+			10,
+			14
+		)
+
+	# Refresh map lens buttons & banner
+	for lspec in GameCatalog.MAP_LENSES:
+		var lid: int = int(lspec["id"])
+		if _lens_btns.has(lid):
+			var lb: Button = _lens_btns[lid]
+			var active := state.active_lens == lid
+			_style_button(
+				lb,
+				DesertPalette.UI_GOLD_TOP if active else DesertPalette.UI_WOOD_BODY,
+				DesertPalette.UI_GOLD_BASE if active else DesertPalette.UI_WOOD_DEEP,
+				DesertPalette.UI_INK if active else Color("fff2d4"),
+				9,
+				10
+			)
+	if state.active_lens == GameCatalog.MapLens.NONE:
+		_lens_banner.visible = false
+	else:
+		_lens_banner.visible = true
+		for lspec in GameCatalog.MAP_LENSES:
+			if int(lspec["id"]) == state.active_lens:
+				var extra := ""
+				if state.active_lens == GameCatalog.MapLens.POWER:
+					extra = " · LOAD %.1f kW · SOLAR %d%%" % [state.total_power_demand_kw(), roundi(state.sim_clock.solar_factor() * 100.0)]
+				_lens_banner.text = " %s LENS: %s%s " % [str(lspec["name"]).to_upper(), str(lspec["hint"]), extra]
+				break
+
 	var claimable := state.claimable_milestone_count()
 	_menu_badge.visible = claimable > 0
 	_menu_badge.text = " %d " % claimable
@@ -710,10 +1045,17 @@ func _refresh_hud() -> void:
 
 	# Bottom mode bars
 	var tm := state.tool_mode
+	var has_sel := not state.selected_plot().is_empty() or not state.selected_lot().is_empty() or not state.selected_utility().is_empty()
+	if has_sel and _tray_mode != TrayMode.NONE:
+		_tray_mode = TrayMode.NONE
 	_play_bar.visible = tm == GameCatalog.WorldToolMode.PLAY
 	_tray_panel.visible = tm == GameCatalog.WorldToolMode.PLAY and _tray_mode != TrayMode.NONE
+	_inspector.visible = tm == GameCatalog.WorldToolMode.PLAY and _tray_mode == TrayMode.NONE and has_sel and not _menu_open
 	_road_bar.visible = tm == GameCatalog.WorldToolMode.PAINT_ROAD
-	_place_bar.visible = tm == GameCatalog.WorldToolMode.PLACE_BUILDING or tm == GameCatalog.WorldToolMode.PLACE_PARKING or tm == GameCatalog.WorldToolMode.PLACE_DECORATION
+	_pole_bar.visible = tm == GameCatalog.WorldToolMode.PLACE_POWER_POLE
+	_conduit_bar.visible = tm == GameCatalog.WorldToolMode.PAINT_CONDUIT
+	_pipe_bar.visible = tm == GameCatalog.WorldToolMode.PAINT_WATER_PIPE
+	_place_bar.visible = tm == GameCatalog.WorldToolMode.PLACE_BUILDING or tm == GameCatalog.WorldToolMode.PLACE_PARKING or tm == GameCatalog.WorldToolMode.PLACE_DECORATION or tm == GameCatalog.WorldToolMode.PLACE_UTILITY
 	_land_bar.visible = tm == GameCatalog.WorldToolMode.BUY_LAND
 
 	if _play_bar.visible:
@@ -735,19 +1077,36 @@ func _refresh_hud() -> void:
 				if p["is_built"] and state.upgrade_lock_reason(p).is_empty() and state.cash >= GameCatalog.upgrade_cost_for_level(p["type"], p["level"]):
 					can_upg = true
 					break
+		var can_crew := false
+		for ck in [GameCatalog.CrewKind.GRID_TECH, GameCatalog.CrewKind.PUMP_ENGINEER, GameCatalog.CrewKind.LOGISTICS_RUNNER]:
+			var lock_c := state.staff_sim.crew_lock_reason(ck, state)
+			if lock_c.is_empty():
+				var cc := GameCatalog.crew_action_cost(ck, state.staff_sim.crew_level(ck))
+				if state.cash >= cc:
+					can_crew = true
+					break
 		_build_dot.visible = can_build and _tray_mode != TrayMode.BUILD
 		_roads_dot.visible = state.needs_access_road() and state.cash >= 20.0
+		_crew_dot.visible = can_crew and _tray_mode != TrayMode.CREW
 		_upgrade_dot.visible = can_upg and _tray_mode != TrayMode.UPGRADE
 		if _tray_panel.visible:
 			_rebuild_tray_cards()
+		if _inspector.visible:
+			_inspector.refresh()
 
 	if _road_bar.visible:
 		_refresh_road_bar()
+	if _pole_bar.visible:
+		_refresh_pole_bar()
+	if _conduit_bar.visible:
+		_refresh_conduit_bar()
+	if _pipe_bar.visible:
+		_refresh_water_pipe_bar()
 	if _place_bar.visible:
 		_refresh_placement_bar()
 	if _land_bar.visible:
 		_land_title.text = "BUY LAND · %d/%d PARCELS" % [state.world_grid.owned_parcels.size(), int(state.stage_info()["max_parcels"])]
-		_land_hint.text = "Tap a green parcel bordering your land · next %s" % GameCatalog.format_cash(state.world_grid.next_parcel_price()) if state.can_buy_more_land() else "Reach Stage %d to buy more land" % (state.outpost_stage() + 1)
+		_land_hint.text = "Tap a highlighted parcel bordering your land · Traits shown · next %s" % GameCatalog.format_cash(state.world_grid.next_parcel_price()) if state.can_buy_more_land() else "Reach Stage %d to buy more land" % (state.outpost_stage() + 1)
 	if _menu_open:
 		_refresh_menu_modal()
 
@@ -761,14 +1120,15 @@ func _refresh_road_bar() -> void:
 	var affordable := erase or state.cash >= cost
 	var can_ok := reason.is_empty() and tiles > 0 and affordable
 
+	var width_lbl := "2-LANE" if state.road_two_lane else "1-LANE"
 	if not state.has_road_start:
-		_road_hint.text = "TAP FIRST TILE OF ROAD TO REMOVE" if erase else "TAP START TILE, THEN TAP END TILE (STRAIGHT OR L-SHAPE)"
+		_road_hint.text = "TAP START TILE TO ERASE (%s)" % width_lbl if erase else "TAP START TILE, THEN END TILE (%s ROAD · STRAIGHT OR L-SHAPE)" % width_lbl
 	elif not reason.is_empty():
 		_road_hint.text = reason.to_upper()
 	elif not affordable:
 		_road_hint.text = "NEED %s MORE" % GameCatalog.format_cash(cost - state.cash)
 	else:
-		_road_hint.text = "REMOVE %d TILES" % tiles if erase else "%d NEW TILES READY" % tiles
+		_road_hint.text = "REMOVE %d TILES (%s)" % [tiles, width_lbl] if erase else "%d NEW TILES READY (%s)" % [tiles, width_lbl]
 	_road_junc.text = "JUNCTIONS %d/%d" % [state.road_network.highway_turn_off_count(), int(state.stage_info()["max_highway_turn_offs"])]
 
 	var tiers := [GameCatalog.RoadTier.DIRT, GameCatalog.RoadTier.GRAVEL, GameCatalog.RoadTier.PAVED]
@@ -782,11 +1142,77 @@ func _refresh_road_bar() -> void:
 		btn.text = "%s\n%s" % [spec["short"], "%s/t" % GameCatalog.format_cash(spec["cost_per_tile"]) if unl else "STG %d" % int(spec["unlock_stage"])]
 		_style_button(btn, DesertPalette.UI_GOLD_TOP if sel else DesertPalette.UI_WOOD_BODY, DesertPalette.UI_GOLD_BASE if sel else DesertPalette.UI_WOOD_DEEP, DesertPalette.UI_INK if sel else Color.WHITE, 10, 12)
 
+	_road_width_btn.text = "2-LANE\n4M" if state.road_two_lane else "1-LANE\n2M"
+	_style_button(_road_width_btn, DesertPalette.UI_GREEN_TOP if state.road_two_lane else DesertPalette.UI_WOOD_BODY, DesertPalette.UI_GREEN_BASE if state.road_two_lane else DesertPalette.UI_WOOD_DEEP, Color.WHITE, 10, 12)
 	_style_button(_road_erase_btn, DesertPalette.UI_TERRA_TOP if erase else DesertPalette.UI_WOOD_BODY, DesertPalette.UI_TERRA_BASE if erase else DesertPalette.UI_WOOD_DEEP, Color.WHITE, 10, 12)
 	_road_clear_btn.disabled = not state.has_road_start
 	_road_confirm_btn.disabled = not can_ok
 	_road_confirm_btn.text = ("REMOVE · +%s" % GameCatalog.format_cash(-cost) if tiles > 0 else "REMOVE") if erase else ("BUILD · %s" % GameCatalog.format_cash(cost) if tiles > 0 else "BUILD")
 	_style_button(_road_confirm_btn, DesertPalette.UI_TERRA_TOP if erase else DesertPalette.UI_GREEN_TOP, DesertPalette.UI_TERRA_BASE if erase else DesertPalette.UI_GREEN_BASE, Color.WHITE, 11, 12)
+
+
+func _refresh_pole_bar() -> void:
+	var erase := state.pole_erase_mode
+	_pole_hint.text = "TAP ANY POWER POLE OR TOWER TO REMOVE (50% REFUND)" if erase else "TAP OWNED SAND TO PLACE POLES · WIRES AUTO-CONNECT TO BUILDINGS & GENERATORS"
+	var kinds := [GameCatalog.PowerLineKind.WOOD_POLE, GameCatalog.PowerLineKind.STEEL_TOWER]
+	for i in range(2):
+		var pk: int = kinds[i]
+		var spec: Dictionary = GameCatalog.POWER_LINES[pk]
+		var unl := state.is_power_line_unlocked(pk)
+		var sel := not erase and state.active_pole_kind == pk
+		var btn := _pole_kind_btns[i]
+		btn.disabled = not unl
+		btn.text = "%s (%dt) · %s" % [spec["short"], int(spec["span_tiles"]), GameCatalog.format_cash(spec["cost"]) if unl else "STG %d" % int(spec["stage"])]
+		_style_button(btn, DesertPalette.UI_GOLD_TOP if sel else DesertPalette.UI_WOOD_BODY, DesertPalette.UI_GOLD_BASE if sel else DesertPalette.UI_WOOD_DEEP, DesertPalette.UI_INK if sel else Color.WHITE, 10, 12)
+	_style_button(_pole_erase_btn, DesertPalette.UI_TERRA_TOP if erase else DesertPalette.UI_WOOD_BODY, DesertPalette.UI_TERRA_BASE if erase else DesertPalette.UI_WOOD_DEEP, Color.WHITE, 10, 12)
+
+
+func _refresh_conduit_bar() -> void:
+	var prev := state.compute_conduit_line_preview()
+	var erase := state.conduit_erase_mode
+	var tiles: int = prev["build"].size()
+	var cost: float = prev["cost"]
+	var reason: String = prev["reason"]
+	var affordable := erase or state.cash >= cost
+	var can_ok := reason.is_empty() and tiles > 0 and affordable
+
+	if not state.has_conduit_start:
+		_conduit_hint.text = "TAP START TILE TO DIG UP BURIED CABLES" if erase else "TAP START TILE, THEN END TILE · BURIED WIRES RUN CLEANLY UNDER ROADS & PLAZAS"
+	elif not reason.is_empty():
+		_conduit_hint.text = reason.to_upper()
+	elif not affordable:
+		_conduit_hint.text = "NEED %s MORE" % GameCatalog.format_cash(cost - state.cash)
+	else:
+		_conduit_hint.text = "REMOVE %d CABLES" % tiles if erase else "%d UNDERGROUND CONDUIT TILES READY" % tiles
+	_style_button(_conduit_erase_btn, DesertPalette.UI_TERRA_TOP if erase else DesertPalette.UI_WOOD_BODY, DesertPalette.UI_TERRA_BASE if erase else DesertPalette.UI_WOOD_DEEP, Color.WHITE, 10, 12)
+	_conduit_clear_btn.disabled = not state.has_conduit_start
+	_conduit_confirm_btn.disabled = not can_ok
+	_conduit_confirm_btn.text = ("REMOVE · +%s" % GameCatalog.format_cash(-cost) if tiles > 0 else "REMOVE") if erase else ("BURY CABLES · %s" % GameCatalog.format_cash(cost) if tiles > 0 else "BURY CABLES")
+	_style_button(_conduit_confirm_btn, DesertPalette.UI_TERRA_TOP if erase else DesertPalette.UI_GREEN_TOP, DesertPalette.UI_TERRA_BASE if erase else DesertPalette.UI_GREEN_BASE, Color.WHITE, 11, 12)
+
+
+func _refresh_water_pipe_bar() -> void:
+	var prev := state.compute_water_pipe_line_preview()
+	var erase := state.water_pipe_erase_mode
+	var tiles: int = prev["build"].size()
+	var cost: float = prev["cost"]
+	var reason: String = prev["reason"]
+	var affordable := erase or state.cash >= cost
+	var can_ok := reason.is_empty() and tiles > 0 and affordable
+
+	if not state.has_water_pipe_start:
+		_pipe_hint.text = "TAP START TILE TO DIG UP WATER PIPES" if erase else "TAP START TILE, THEN END TILE · WATER PIPES RUN CLEANLY UNDER ROADS & PLAZAS"
+	elif not reason.is_empty():
+		_pipe_hint.text = reason.to_upper()
+	elif not affordable:
+		_pipe_hint.text = "NEED %s MORE" % GameCatalog.format_cash(cost - state.cash)
+	else:
+		_pipe_hint.text = "REMOVE %d PIPES" % tiles if erase else "%d UNDERGROUND WATER PIPES READY" % tiles
+	_style_button(_pipe_erase_btn, DesertPalette.UI_TERRA_TOP if erase else DesertPalette.UI_WOOD_BODY, DesertPalette.UI_TERRA_BASE if erase else DesertPalette.UI_WOOD_DEEP, Color.WHITE, 10, 12)
+	_pipe_clear_btn.disabled = not state.has_water_pipe_start
+	_pipe_confirm_btn.disabled = not can_ok
+	_pipe_confirm_btn.text = ("REMOVE · +%s" % GameCatalog.format_cash(-cost) if tiles > 0 else "REMOVE") if erase else ("LAY PIPES · %s" % GameCatalog.format_cash(cost) if tiles > 0 else "LAY PIPES")
+	_style_button(_pipe_confirm_btn, DesertPalette.UI_TERRA_TOP if erase else DesertPalette.UI_GREEN_TOP, DesertPalette.UI_TERRA_BASE if erase else DesertPalette.UI_GREEN_BASE, Color.WHITE, 11, 12)
 
 
 func _refresh_placement_bar() -> void:
@@ -817,8 +1243,14 @@ func _refresh_placement_bar() -> void:
 			title = "PLACE " + str(s["name"]).to_upper()
 			cost = float(s["cost"])
 	elif mode == GameCatalog.WorldToolMode.PLACE_DECORATION and not state.pending_deco.is_empty():
-		title = "PLACE " + str(state.pending_deco["name"]).to_upper()
-		cost = float(state.pending_deco["cost"])
+		is_move = not state.relocating_deco_id.is_empty()
+		title = ("MOVE " if is_move else "PLACE ") + str(state.pending_deco["name"]).to_upper()
+		cost = 0.0 if is_move else float(state.pending_deco["cost"])
+	elif mode == GameCatalog.WorldToolMode.PLACE_UTILITY and state.pending_utility_kind >= 0:
+		var u: Dictionary = GameCatalog.UTILITIES[state.pending_utility_kind]
+		is_move = not state.relocating_utility_id.is_empty()
+		title = ("MOVE " if is_move else "PLACE ") + str(u["name"]).to_upper()
+		cost = 0.0 if is_move else float(u["cost"])
 
 	var badge_col := DesertPalette.UI_GREEN_BASE
 	if not valid:
@@ -831,12 +1263,27 @@ func _refresh_placement_bar() -> void:
 		badge_col = DesertPalette.UI_TERRA_TOP if sc <= 0.0 else (DesertPalette.UI_GREEN_BASE if sc >= 0.88 else DesertPalette.UI_GOLD_BASE)
 		_place_badge.text = " %s " % acc["status_label"]
 		_place_hint.text = acc["hint"]
+	elif mode == GameCatalog.WorldToolMode.PLACE_UTILITY and state.pending_utility_kind == GameCatalog.UtilityKind.WINDMILL and state.world_grid.cell_trait(Vector2i(state.ghost_grid_x, state.ghost_grid_z)) == GameCatalog.ParcelTrait.WIND_CORRIDOR:
+		badge_col = DesertPalette.TURQUOISE
+		_place_badge.text = " +40% WIND! "
+		_place_hint.text = "Wind Corridor bonus active (10.5 kW steady 24/7) · Gold frame shows local auto-link reach"
+	elif mode == GameCatalog.WorldToolMode.PLACE_UTILITY and state.pending_utility_kind == GameCatalog.UtilityKind.WATER_WELL and state.world_grid.cell_trait(Vector2i(state.ghost_grid_x, state.ghost_grid_z)) == GameCatalog.ParcelTrait.AQUIFER:
+		badge_col = DesertPalette.WATER
+		_place_badge.text = " +80% AQUIFER! "
+		_place_hint.text = "Desert Aquifer bonus active (18 Water) · Blue frame shows local auto-link reach"
+	elif mode == GameCatalog.WorldToolMode.PLACE_UTILITY and state.pending_utility_kind == GameCatalog.UtilityKind.OIL_PUMPJACK:
+		badge_col = DesertPalette.UI_GOLD_BASE
+		_place_badge.text = " OIL SEEP OK "
+		_place_hint.text = "Produces 12 Crude/min when powered (6 kW) · Connect via Poles or Buried Wire"
+	elif mode == GameCatalog.WorldToolMode.PLACE_UTILITY:
+		_place_badge.text = " READY "
+		_place_hint.text = "Tap sand to position · Connect Power / Pipes for remote units"
 	else:
 		_place_badge.text = " READY "
 		_place_hint.text = "Tap sand to position · drag to orbit/pan"
 	_place_badge.add_theme_stylebox_override("normal", _make_box(badge_col, DesertPalette.UI_WOOD_FRAME, 8, 1, 0))
 	_place_title.text = title
-	_place_rot_btn.visible = mode != GameCatalog.WorldToolMode.PLACE_DECORATION
+	_place_rot_btn.visible = true
 	_place_confirm_btn.disabled = not (valid and state.cash >= cost)
 	_place_confirm_btn.text = "MOVE HERE" if is_move else ("PLACE · %s" % GameCatalog.format_cash(cost) if cost > 0.0 else "PLACE")
 
@@ -844,44 +1291,140 @@ func _refresh_placement_bar() -> void:
 func _rebuild_tray_cards() -> void:
 	for c in _tray_list.get_children():
 		c.queue_free()
+	for c in _tray_filters_row.get_children():
+		c.queue_free()
+
 	if _tray_mode == TrayMode.BUILD:
-		_tray_title.text = "BUILD · STAGE %d" % state.outpost_stage()
-		_add_card("Build Roads", "%d tiles laid" % state.road_network.road_count(), "DRAW", true, func():
-			_tray_mode = TrayMode.NONE
-			state.enter_road_mode()
-		)
-		_add_card("Buy Land", "%d/%d parcels" % [state.world_grid.owned_parcels.size(), int(state.stage_info()["max_parcels"])], GameCatalog.format_cash(state.world_grid.next_parcel_price()) if state.can_buy_more_land() else "STAGE %d" % (state.outpost_stage() + 1), state.can_buy_more_land(), func():
-			_tray_mode = TrayMode.NONE
-			state.enter_land_mode()
-		)
-		for kind in [GameCatalog.ParkingLotKind.DIRT_PULL_OFF, GameCatalog.ParkingLotKind.GRAVEL_LOT, GameCatalog.ParkingLotKind.PAVED_LOT]:
-			if not state.is_parking_kind_unlocked(kind):
-				continue
-			var spec: Dictionary = GameCatalog.PARKING_LOTS[kind]
-			var k_val: int = kind
-			_add_card(spec["name"], "%d bays · Place" % int(spec["spaces"]), GameCatalog.format_cash(spec["cost"]), state.cash >= float(spec["cost"]), func():
+		_tray_title.text = "BUILD · STG %d" % state.outpost_stage()
+		for fspec in [["all", "ALL"], ["stores", "STORES"], ["power", "POWER"], ["water", "WATER"], ["supply", "SUPPLY"], ["decor", "DECOR"]]:
+			var fid: String = fspec[0]
+			var fb := Button.new()
+			fb.text = fspec[1]
+			var active := _build_filter == fid
+			_style_button(fb, DesertPalette.UI_GOLD_TOP if active else DesertPalette.UI_WOOD_BODY, DesertPalette.UI_GOLD_BASE if active else DesertPalette.UI_WOOD_DEEP, DesertPalette.UI_INK if active else Color("fff2d4"), 9, 8)
+			fb.pressed.connect(func():
+				_build_filter = fid
+				_rebuild_tray_cards()
+			)
+			_tray_filters_row.add_child(fb)
+
+		var f := _build_filter
+		if f == "all" or f == "stores":
+			_add_card("Build Roads", "%d tiles laid" % state.road_network.road_count(), "DRAW", true, func():
 				_tray_mode = TrayMode.NONE
-				state.start_placing_parking(k_val)
+				state.enter_road_mode()
 			)
-		for p in state.plots:
-			if p["is_built"]:
-				continue
-			var d: Dictionary = GameCatalog.BUSINESSES[p["type"]]
-			var unl := state.is_plot_unlocked(p)
-			var bt: int = p["type"]
-			_add_card(d["short"], "+%s/m" % GameCatalog.format_cash(d["base_income_per_min"]) if unl else "Stage %d" % int(d["stage"]), GameCatalog.format_cash(d["purchase_cost"]) if unl else "STG %d" % int(d["stage"]), unl and state.cash >= float(d["purchase_cost"]), func():
-				if unl:
+			_add_card("Buy Land", "%d/%d parcels" % [state.world_grid.owned_parcels.size(), int(state.stage_info()["max_parcels"])], GameCatalog.format_cash(state.world_grid.next_parcel_price()) if state.can_buy_more_land() else "STAGE %d" % (state.outpost_stage() + 1), state.can_buy_more_land(), func():
+				_tray_mode = TrayMode.NONE
+				state.enter_land_mode()
+			)
+			for kind in [GameCatalog.ParkingLotKind.DIRT_PULL_OFF, GameCatalog.ParkingLotKind.GRAVEL_LOT, GameCatalog.ParkingLotKind.PAVED_LOT]:
+				if not state.is_parking_kind_unlocked(kind):
+					continue
+				var spec: Dictionary = GameCatalog.PARKING_LOTS[kind]
+				var k_val: int = kind
+				_add_card(spec["name"], "%d bays · Place" % int(spec["spaces"]), GameCatalog.format_cash(spec["cost"]), state.cash >= float(spec["cost"]), func():
 					_tray_mode = TrayMode.NONE
-					state.start_placing_building(bt)
-			)
-		for dec in GameCatalog.DECORATIONS:
-			var unl := state.is_deco_unlocked(dec["kind"])
-			var d_copy: Dictionary = dec
-			_add_card(dec["name"], dec["bonus"], GameCatalog.format_cash(dec["cost"]) if unl else "STG %d" % int(dec["stage"]), unl and state.cash >= float(dec["cost"]), func():
-				if unl:
+					state.start_placing_parking(k_val)
+				)
+			for p in state.plots:
+				if p["is_built"]:
+					continue
+				var d: Dictionary = GameCatalog.BUSINESSES[p["type"]]
+				var unl := state.is_plot_unlocked(p)
+				var bt: int = p["type"]
+				_add_card(d["short"], "+%s/m" % GameCatalog.format_cash(d["base_income_per_min"]) if unl else "Stage %d" % int(d["stage"]), GameCatalog.format_cash(d["purchase_cost"]) if unl else "STG %d" % int(d["stage"]), unl and state.cash >= float(d["purchase_cost"]), func():
+					if unl:
+						_tray_mode = TrayMode.NONE
+						state.start_placing_building(bt)
+				)
+
+		if f == "all" or f == "power":
+			for ukind in [GameCatalog.UtilityKind.WINDMILL, GameCatalog.UtilityKind.DIESEL_GEN, GameCatalog.UtilityKind.SOLAR_ARRAY, GameCatalog.UtilityKind.BATTERY_BANK]:
+				var uspec: Dictionary = GameCatalog.UTILITIES[ukind]
+				var unl := state.is_utility_unlocked(ukind)
+				var uk_val: int = ukind
+				var sub := "%.0f kWh store" % float(uspec["battery_kwh"]) if float(uspec["battery_kwh"]) > 0.0 else ("%.0f kW solar" % float(uspec["base_kw"]) if bool(uspec["is_solar"]) else "%.1f kW 24/7" % float(uspec["base_kw"]))
+				_add_card(uspec["short"], sub if unl else "Stage %d" % int(uspec["stage"]), GameCatalog.format_cash(uspec["cost"]) if unl else "STG %d" % int(uspec["stage"]), unl and state.cash >= float(uspec["cost"]), func():
+					if unl:
+						_tray_mode = TrayMode.NONE
+						state.start_placing_utility(uk_val)
+				)
+			var pole_unl := state.is_power_line_unlocked(GameCatalog.PowerLineKind.WOOD_POLE)
+			_add_card("Power Poles", "Overhead wires" if pole_unl else "Stage 2", "$12+" if pole_unl else "STG 2", pole_unl, func():
+				if pole_unl:
 					_tray_mode = TrayMode.NONE
-					state.start_placing_decoration(d_copy)
+					state.enter_pole_mode(GameCatalog.PowerLineKind.WOOD_POLE)
 			)
+			var cond_unl := state.is_power_line_unlocked(GameCatalog.PowerLineKind.UNDERGROUND)
+			_add_card("Buried Wire", "Under roads" if cond_unl else "Stage 2", "$18/t" if cond_unl else "STG 2", cond_unl, func():
+				if cond_unl:
+					_tray_mode = TrayMode.NONE
+					state.enter_conduit_mode()
+			)
+
+		if f == "all" or f == "water":
+			for ukind in [GameCatalog.UtilityKind.WATER_WELL, GameCatalog.UtilityKind.WATER_TOWER]:
+				var uspec: Dictionary = GameCatalog.UTILITIES[ukind]
+				var unl := state.is_utility_unlocked(ukind)
+				var uk_val: int = ukind
+				var sub := "10-18 H2O" if ukind == GameCatalog.UtilityKind.WATER_WELL else "+4 H2O · 4t hub"
+				_add_card(uspec["short"], sub if unl else "Stage %d" % int(uspec["stage"]), GameCatalog.format_cash(uspec["cost"]) if unl else "STG %d" % int(uspec["stage"]), unl and state.cash >= float(uspec["cost"]), func():
+					if unl:
+						_tray_mode = TrayMode.NONE
+						state.start_placing_utility(uk_val)
+				)
+			var pipe_unl := state.outpost_stage() >= 2
+			_add_card("Water Pipes", "Under roads" if pipe_unl else "Stage 2", "$12/t" if pipe_unl else "STG 2", pipe_unl, func():
+				if pipe_unl:
+					_tray_mode = TrayMode.NONE
+					state.enter_water_pipe_mode()
+			)
+
+		if f == "all" or f == "supply":
+			for ukind in [GameCatalog.UtilityKind.FREIGHT_DEPOT, GameCatalog.UtilityKind.OIL_PUMPJACK, GameCatalog.UtilityKind.DESERT_GREENHOUSE, GameCatalog.UtilityKind.MINI_REFINERY, GameCatalog.UtilityKind.CRAFT_WORKSHOP]:
+				var uspec: Dictionary = GameCatalog.UTILITIES[ukind]
+				var unl := state.is_utility_unlocked(ukind)
+				var uk_val: int = ukind
+				var sub := "Auto-restock" if ukind == GameCatalog.UtilityKind.FREIGHT_DEPOT else ("Oil Seep only" if ukind == GameCatalog.UtilityKind.OIL_PUMPJACK else ("+12 Food/m" if ukind == GameCatalog.UtilityKind.DESERT_GREENHOUSE else ("+14 Fuel/m" if ukind == GameCatalog.UtilityKind.MINI_REFINERY else "+10 Crafts/m")))
+				_add_card(uspec["short"], sub if unl else "Stage %d" % int(uspec["stage"]), GameCatalog.format_cash(uspec["cost"]) if unl else "STG %d" % int(uspec["stage"]), unl and state.cash >= float(uspec["cost"]), func():
+					if unl:
+						_tray_mode = TrayMode.NONE
+						state.start_placing_utility(uk_val)
+				)
+
+		if f == "all" or f == "decor":
+			for dec in GameCatalog.DECORATIONS:
+				var unl := state.is_deco_unlocked(dec["kind"])
+				var d_copy: Dictionary = dec
+				_add_card(dec["name"], dec["bonus"], GameCatalog.format_cash(dec["cost"]) if unl else "STG %d" % int(dec["stage"]), unl and state.cash >= float(dec["cost"]), func():
+					if unl:
+						_tray_mode = TrayMode.NONE
+						state.start_placing_decoration(d_copy)
+				)
+	elif _tray_mode == TrayMode.CREW:
+		var m_pct := roundi(state.staff_sim.morale * 100.0)
+		var wages := state.staff_sim.total_wages_per_min
+		_tray_title.text = "OUTPOST CREW · MORALE %d%% · WAGES $%.0f/M" % [m_pct, wages]
+		var ml := Label.new()
+		ml.text = state.staff_sim.morale_breakdown
+		_style_label(ml, DesertPalette.UI_INK_MUTED, 10, false)
+		_tray_filters_row.add_child(ml)
+
+		for ck in [GameCatalog.CrewKind.GRID_TECH, GameCatalog.CrewKind.PUMP_ENGINEER, GameCatalog.CrewKind.LOGISTICS_RUNNER]:
+			var spec: Dictionary = GameCatalog.OUTPOST_CREW[ck]
+			var lv := state.staff_sim.crew_level(ck)
+			var lock := state.staff_sim.crew_lock_reason(ck, state)
+			var cost := GameCatalog.crew_action_cost(ck, lv)
+			var can_act := lock.is_empty() and state.cash >= cost
+			var next_lv := mini(StaffSim.MAX_CREW_LEVEL, lv + 1)
+			var pct_now := roundi(GameCatalog.crew_boost_for_level(ck, lv) * 100.0)
+			var pct_nxt := roundi(GameCatalog.crew_boost_for_level(ck, next_lv) * 100.0)
+			var title_s := "%s Lv%d" % [spec["short"], lv] if lv > 0 else str(spec["short"])
+			var sub_s := ("+%d%% MAX · $%.0f/m" % [pct_now, float(spec["wage_per_min"])]) if lv >= StaffSim.MAX_CREW_LEVEL else ("+%d%% → +%d%% · $%.0f/m" % [pct_now, pct_nxt, float(spec["wage_per_min"])] if lv > 0 else "+%d%% · $%.0f/m" % [pct_nxt, float(spec["wage_per_min"])])
+			var btn_t := lock if not lock.is_empty() else (("HIRE " if lv == 0 else "LV%d " % next_lv) + GameCatalog.format_cash(cost))
+			var ck_val: int = ck
+			_add_card(title_s, sub_s, btn_t, can_act, func(): state.hire_or_train_crew(ck_val), lv > 0)
 	else:
 		_tray_title.text = "UPGRADE & MOVE"
 		var tc := state.tap_upgrade_cost()
@@ -1035,9 +1578,12 @@ func _update_in_world_bubbles() -> void:
 		var can_more := state.can_buy_more_land()
 		for p in state.world_grid.purchasable_parcels():
 			var p_ref: Vector2i = p
+			var tr_id := state.world_grid.parcel_trait(p)
+			var tr_spec := GameCatalog.parcel_trait_spec(tr_id)
+			var prefix := "%s · " % str(tr_spec["short"]) if tr_id != GameCatalog.ParcelTrait.NONE else "LAND "
 			entries.append({
 				"pos": OutpostLayout.parcel_center(p.x, p.y) + Vector3(0, 1.2, 0),
-				"text": "LAND %s" % GameCatalog.format_cash(price) if can_more else "LOCKED",
+				"text": "%s%s" % [prefix, GameCatalog.format_cash(price)] if can_more else "%sLOCKED" % prefix,
 				"top": DesertPalette.UI_GREEN_TOP if (can_more and state.cash >= price) else DesertPalette.UI_WOOD_BODY,
 				"base": DesertPalette.UI_GREEN_BASE if (can_more and state.cash >= price) else DesertPalette.UI_WOOD_DEEP,
 				"fg": Color.WHITE,
@@ -1100,6 +1646,11 @@ func _update_in_world_bubbles() -> void:
 		for p in state.plots:
 			if not p["is_built"]:
 				continue
+			var rt: Dictionary = p.get("runtime", {})
+			var low_pwr: bool = float(rt.get("power_demand_kw", 0.0)) > 0.0 and float(rt.get("power_ratio", 1.0)) < 0.99
+			var low_h2o: bool = float(rt.get("water_demand", 0.0)) > 0.0 and float(rt.get("water_ratio", 1.0)) < 0.99
+			var smax := float(rt.get("stock_max", 0.0))
+			var low_stk: bool = smax > 0.0 and (float(rt.get("stock_units", smax)) / smax) < 0.20 and not bool(rt.get("restock_in_transit", false))
 			if not state.parking_lots.is_empty() and float(p["access"]["score"]) <= 0.0:
 				entries.append({
 					"pos": state.plot_position(p) + Vector3(0, 3.6, 0),
@@ -1109,6 +1660,42 @@ func _update_in_world_bubbles() -> void:
 					"fg": Color.WHITE,
 					"bob": bob * 0.6,
 					"cb": func(): state.enter_road_mode(),
+				})
+			elif low_pwr:
+				var pid_ref: String = str(p["id"])
+				entries.append({
+					"pos": state.plot_position(p) + Vector3(0, 3.6, 0),
+					"text": "⚡ LOW POWER",
+					"top": DesertPalette.UI_TERRA_TOP,
+					"base": DesertPalette.UI_TERRA_BASE,
+					"fg": Color.WHITE,
+					"bob": bob * 0.6,
+					"cb": func():
+						state.select_plot(pid_ref)
+						_inspector.open_tab("power")
+				})
+			elif low_stk:
+				var pid_ref2: String = str(p["id"])
+				entries.append({
+					"pos": state.plot_position(p) + Vector3(0, 3.6, 0),
+					"text": "📦 RESTOCK",
+					"top": DesertPalette.UI_GOLD_TOP,
+					"base": DesertPalette.UI_GOLD_BASE,
+					"fg": DesertPalette.UI_INK,
+					"bob": bob * 0.6,
+					"cb": func():
+						state.select_plot(pid_ref2)
+						_inspector.open_tab("stock")
+				})
+			elif low_h2o:
+				entries.append({
+					"pos": state.plot_position(p) + Vector3(0, 3.6, 0),
+					"text": "💧 LOW WATER",
+					"top": DesertPalette.WATER,
+					"base": Color("327b8c"),
+					"fg": Color.WHITE,
+					"bob": bob * 0.6,
+					"cb": func(): state.set_map_lens(GameCatalog.MapLens.WATER),
 				})
 			elif state.upgrade_lock_reason(p).is_empty():
 				var cost := GameCatalog.upgrade_cost_for_level(p["type"], p["level"])

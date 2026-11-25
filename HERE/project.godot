@@ -1,5 +1,10 @@
 ; Engine configuration file.
-; Desert Outpost — Godot 4.7 Mobile (Metal / Vulkan)
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
 
 config_version=5
 
@@ -18,10 +23,6 @@ window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 window/handheld/orientation=4
 
-[input_devices]
-
-pointing/emulate_touch_from_mouse=false
-
 [physics]
 
 3d/physics_engine="Jolt Physics"
@@ -30,6 +31,5 @@ pointing/emulate_touch_from_mouse=false
 
 rendering_device/driver.windows="d3d12"
 renderer/rendering_method="mobile"
-anti_aliasing/quality/msaa_3d=2
 lights_and_shadows/directional_shadow/size=2048
-lights_and_shadows/directional_shadow/soft_shadow_filter_quality=2
+anti_aliasing/quality/msaa_3d=2
