@@ -14,6 +14,7 @@ var state: GameState
 
 var _backdrop_root: Node3D
 var _clouds_node: Node3D
+var _sky_mat: ShaderMaterial
 var _static_outpost_node: Node3D
 var _buildings_root: Node3D
 var _utilities_root: Node3D
@@ -73,29 +74,41 @@ func setup(game_state: GameState) -> void:
 func _setup_environment() -> void:
 	var env := Environment.new()
 	var sky := Sky.new()
-	var sky_mat := ProceduralSkyMaterial.new()
-	sky_mat.sky_top_color = Color("6693c9")
-	sky_mat.sky_horizon_color = Color("f7cca6")
-	sky_mat.ground_bottom_color = DesertPalette.SAND_DARK
-	sky_mat.ground_horizon_color = Color("f7cca6")
-	sky_mat.sun_angle_max = 18.0
-	sky.sky_material = sky_mat
+	var sky_shader := load("res://assets/shaders/route163_sky.gdshader") as Shader
+	if sky_shader != null:
+		_sky_mat = ShaderMaterial.new()
+		_sky_mat.shader = sky_shader
+		sky.sky_material = _sky_mat
+	else:
+		var sky_mat := ProceduralSkyMaterial.new()
+		sky_mat.sky_top_color = Color("c5d4dd")
+		sky_mat.sky_horizon_color = Color("ece0d0")
+		sky_mat.ground_bottom_color = DesertPalette.SAND_DARK
+		sky_mat.ground_horizon_color = Color("ece0d0")
+		sky.sky_material = sky_mat
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color("f2d7bc")
-	env.ambient_light_energy = 0.52
+	env.ambient_light_color = Color("5a3954")
+	env.ambient_light_energy = 0.30
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	env.tonemap_exposure = 0.92
 	env.fog_enabled = true
-	env.fog_light_color = Color("f3cfa8")
-	env.fog_density = 0.0018
+	env.fog_light_color = Color("e6a698")
+	env.fog_density = 0.00082
+	env.fog_aerial_perspective = 0.10
+	env.fog_sky_affect = 0.0
 	world_env.environment = env
 
 	sun_light.shadow_enabled = true
-	sun_light.shadow_bias = 0.04
-	sun_light.shadow_normal_bias = 1.5
-	sun_light.directional_shadow_max_distance = 160.0
+	sun_light.shadow_bias = 0.032
+	sun_light.shadow_normal_bias = 1.25
+	sun_light.directional_shadow_max_distance = 250.0
+	sun_light.directional_shadow_fade_start = 0.88
 	sun_light.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+	sun_light.directional_shadow_split_1 = 0.055
+	sun_light.directional_shadow_split_2 = 0.17
+	sun_light.directional_shadow_split_3 = 0.45
 
 
 func _build_tumbleweeds() -> void:
@@ -532,27 +545,47 @@ func _update_lighting() -> void:
 	var sun_angle := (t - 0.25) * TAU
 	var elev := sin(sun_angle)
 	var night_factor := clampf((-elev + 0.08) / 0.42, 0.0, 1.0)
-	var sunset_factor := clampf(1.0 - absf(elev - 0.06) / 0.28, 0.0, 1.0) * (1.0 - night_factor * 0.5)
+	var sunset_factor := clampf(1.0 - absf(elev - 0.05) / 0.19, 0.0, 1.0) * (1.0 - night_factor * 0.5)
 
 	DesertPalette.update_night_glow(night_factor, sunset_factor)
 
 	var env := world_env.environment
-	var sky_mat := env.sky.sky_material as ProceduralSkyMaterial
-	var top := Color("6693c9").lerp(Color("4b426e"), sunset_factor * 0.85).lerp(Color("0a1426"), night_factor)
-	var hor := Color("f7cca6").lerp(Color("ffaf68"), sunset_factor * 0.85).lerp(Color("284060"), night_factor)
-	sky_mat.sky_top_color = top
-	sky_mat.sky_horizon_color = hor
-	sky_mat.ground_horizon_color = hor
-	sky_mat.ground_bottom_color = DesertPalette.SAND_DARK.lerp(Color("1c2434"), night_factor * 0.8)
-	env.fog_light_color = hor
-	env.ambient_light_color = Color("f2d7bc").lerp(Color("ffbe96"), sunset_factor * 0.6).lerp(Color("3f5a82"), night_factor)
-	env.ambient_light_energy = lerpf(0.58, 0.26, night_factor)
+	# Fractured Red-Rock Canyon atmosphere (matching reference):
+	# Crisp pale icy-cyan upper sky + soft rosy-mist distant mesas + rich crimson & deep-plum cliffs!
+	var top := Color("b4eaf3").lerp(Color("8880a2"), sunset_factor * 0.80).lerp(Color("0e182a"), night_factor)
+	var mid := Color("dcf0f2").lerp(Color("cfa09c"), sunset_factor * 0.80).lerp(Color("16243b"), night_factor)
+	var hor := Color("f0d4c8").lerp(Color("e49582"), sunset_factor * 0.85).lerp(Color("223550"), night_factor)
+	var gnd := DesertPalette.SAND_DARK.lerp(Color("182232"), night_factor * 0.85)
 
-	var sun_pitch := clampf(lerpf(-0.92, -0.32, sunset_factor), -1.1, -0.25)
-	var sun_yaw := lerpf(-0.65, 0.75, clampf((t - 0.25) * 2.0, 0.0, 1.0))
-	sun_light.rotation = Vector3(sun_pitch, sun_yaw, 0.0)
-	sun_light.light_color = Color("fff6e3").lerp(Color("ff9e5e"), sunset_factor * 0.85).lerp(Color("7ba4d8"), night_factor)
-	sun_light.light_energy = lerpf(1.22, 0.34, night_factor)
+	# Continuous 3/4 side-key sun arc: keeps flat sand & cliff tops luminous (key_y ~ 0.62) while
+	# carving bold sunlit coral vs. 100% deep plum-shadow vertical cliff & ramp facets at ALL daytime hours!
+	var day_prog := clampf((t - 0.25) * 2.0, 0.0, 1.0)
+	var key_x := lerpf(-0.56, -0.78, day_prog)
+	var key_y := lerpf(0.64, 0.36, sunset_factor) if night_factor < 0.7 else 0.46
+	var key_z := lerpf(0.38, 0.24, day_prog)
+	var key_dir := Vector3(key_x, key_y, key_z).normalized()
+	sun_light.basis = Basis.looking_at(-key_dir, Vector3.UP)
+	sun_light.light_color = Color("fff0de").lerp(Color("ffb386"), sunset_factor * 0.82).lerp(Color("88b0e4"), night_factor)
+	sun_light.light_energy = lerpf(1.18, 0.40, night_factor)
+
+	if _sky_mat != null:
+		_sky_mat.set_shader_parameter("sky_top_color", top)
+		_sky_mat.set_shader_parameter("sky_mid_color", mid)
+		_sky_mat.set_shader_parameter("sky_horizon_color", hor)
+		_sky_mat.set_shader_parameter("ground_color", gnd)
+		_sky_mat.set_shader_parameter("sun_dir", key_dir)
+		_sky_mat.set_shader_parameter("sun_scatter_color", Color("fff2e6").lerp(Color("ffc2a8"), sunset_factor))
+		_sky_mat.set_shader_parameter("sun_scatter_strength", lerpf(0.10, 0.22, sunset_factor) * (1.0 - night_factor))
+		_sky_mat.set_shader_parameter("cirrus_opacity", lerpf(0.08, 0.03, night_factor))
+		_sky_mat.set_shader_parameter("cirrus_drift", state.anim_time * 0.004)
+		_sky_mat.set_shader_parameter("night_factor", night_factor)
+
+	# Warm rosy-salmon aerial mist drapes >220m ridges in dreamy rose haze while keeping <140m cliffs & buildings crisp!
+	env.fog_light_color = Color("e6a596").lerp(Color("d98474"), sunset_factor * 0.8).lerp(Color("20324c"), night_factor)
+	env.fog_density = lerpf(0.00082, 0.00115, sunset_factor * 0.5 + night_factor * 0.25)
+	# Deep dusty-plum ambient fill turns every unlit rock facet & crevice rich violet-plum (#4c3248)!
+	env.ambient_light_color = Color("5a3954").lerp(Color("54334e"), sunset_factor * 0.65).lerp(Color("3f5a85"), night_factor)
+	env.ambient_light_energy = lerpf(0.30, 0.26, night_factor)
 
 
 func _update_plot_animations() -> void:

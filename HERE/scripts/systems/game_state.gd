@@ -200,13 +200,18 @@ func _init_world(preset: int) -> void:
 		parking_lots.append(make_lot(GameCatalog.ParkingLotKind.PAVED_LOT, -3, -12, 2))
 		parking_lots.append(make_lot(GameCatalog.ParkingLotKind.GRAVEL_LOT, 2, -20, 2))
 		parking_lots.append(make_lot(GameCatalog.ParkingLotKind.DIRT_PULL_OFF, -9, -20, 2))
-		# Full City showcase Power + Water + Supply Chain setup
+		# Full City showcase Power + Water + Supply Chain setup (balanced for 24/7 day & night loads!)
 		utilities.append(make_utility(GameCatalog.UtilityKind.SOLAR_ARRAY, 13, -11, 0))
 		utilities.append(make_utility(GameCatalog.UtilityKind.SOLAR_ARRAY, 13, -26, 0))
 		utilities.append(make_utility(GameCatalog.UtilityKind.BATTERY_BANK, 13, -16, 0))
+		utilities.append(make_utility(GameCatalog.UtilityKind.BATTERY_BANK, 13, -18, 0))
+		utilities.append(make_utility(GameCatalog.UtilityKind.BATTERY_BANK, 13, 0, 0))
 		utilities.append(make_utility(GameCatalog.UtilityKind.WINDMILL, 13, -20, 0))
 		utilities.append(make_utility(GameCatalog.UtilityKind.WINDMILL, 13, -23, 0))
+		utilities.append(make_utility(GameCatalog.UtilityKind.WINDMILL, 13, 3, 0))
 		utilities.append(make_utility(GameCatalog.UtilityKind.DIESEL_GEN, -15, -18, 0))
+		utilities.append(make_utility(GameCatalog.UtilityKind.DIESEL_GEN, -15, -21, 0))
+		utilities.append(make_utility(GameCatalog.UtilityKind.DIESEL_GEN, -15, -9, 0))
 		# Water Well on Aquifer parcel (5,6) + Water Tower + Supply Producers + Oil Pumpjack on Oil Seep (1,5)
 		utilities.append(make_utility(GameCatalog.UtilityKind.WATER_WELL, 13, -7, 0))
 		utilities.append(make_utility(GameCatalog.UtilityKind.WATER_TOWER, 9, -11, 0))
@@ -214,12 +219,13 @@ func _init_world(preset: int) -> void:
 		utilities.append(make_utility(GameCatalog.UtilityKind.DESERT_GREENHOUSE, -16, -12, 0))
 		utilities.append(make_utility(GameCatalog.UtilityKind.OIL_PUMPJACK, -21, -15, 0))
 		utilities.append(make_utility(GameCatalog.UtilityKind.MINI_REFINERY, -16, -24, 0))
-		for pc in [Vector2i(12, -10), Vector2i(12, -15), Vector2i(12, -20), Vector2i(12, -25), Vector2i(9, -15), Vector2i(9, -23), Vector2i(-13, -16), Vector2i(-13, -9), Vector2i(-13, -23), Vector2i(-18, -15)]:
+		for pc in [Vector2i(12, -5), Vector2i(12, -10), Vector2i(12, -15), Vector2i(12, -20), Vector2i(12, -25), Vector2i(12, 1), Vector2i(9, -15), Vector2i(9, -23), Vector2i(-13, -16), Vector2i(-13, -12), Vector2i(-13, -9), Vector2i(-13, -23), Vector2i(-15, -16), Vector2i(-18, -15)]:
 			world_grid.set_power_pole(pc, {"kind": GameCatalog.PowerLineKind.WOOD_POLE})
 		for cx in range(-15, 14):
 			world_grid.set_underground_power(Vector2i(cx, -14), {"kind": GameCatalog.PowerLineKind.UNDERGROUND})
 			world_grid.set_water_pipe(Vector2i(cx, -12), {"tier": 1})
 			world_grid.set_water_pipe(Vector2i(cx, -15), {"tier": 1})
+		world_grid.set_underground_power(Vector2i(-15, -13), {"kind": GameCatalog.PowerLineKind.UNDERGROUND})
 		for cz in range(-24, -6):
 			world_grid.set_underground_power(Vector2i(-5, cz), {"kind": GameCatalog.PowerLineKind.UNDERGROUND})
 			world_grid.set_underground_power(Vector2i(5, cz), {"kind": GameCatalog.PowerLineKind.UNDERGROUND})
@@ -228,9 +234,9 @@ func _init_world(preset: int) -> void:
 			world_grid.set_water_pipe(Vector2i(13, cz), {"tier": 1})
 		for cz in range(-24, -11):
 			world_grid.set_water_pipe(Vector2i(-14, cz), {"tier": 1})
-		# Give Diner rooftop solar + starter roaming Crew in Full City showcase
+		# Give Diner, Motel, Gas Station & Lookout rooftop solar + starter roaming Crew in Full City showcase
 		for p in plots:
-			if str(p["id"]) == "diner":
+			if str(p["id"]) in ["diner", "motel", "gas_station", "lookout"]:
 				p["runtime"]["roof_addons"] = ["solar"]
 		staff_sim.crew_levels[GameCatalog.CrewKind.GRID_TECH] = 1
 		staff_sim.crew_levels[GameCatalog.CrewKind.LOGISTICS_RUNNER] = 1
@@ -1363,6 +1369,7 @@ func confirm_water_pipe_line() -> bool:
 func set_time_preset(t: float, pause_cycle: bool = true) -> void:
 	sim_clock.set_time_preset(t, pause_cycle)
 	sync_clock_mirrors()
+	power_network.step(0.0, self)
 	save_state()
 	hud_changed.emit()
 

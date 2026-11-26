@@ -15,6 +15,7 @@ var _has_always := false
 
 var _origin := Vector3.ZERO
 var _rot_y := 0.0
+var _basis := Basis.IDENTITY
 var _stack: Array = []
 var signs: Array[Dictionary] = []
 
@@ -29,15 +30,25 @@ func _init() -> void:
 
 
 func push_tx(local_origin: Vector3, rot_y: float = 0.0) -> void:
-	_stack.append([_origin, _rot_y])
-	_origin = _origin + _rot_vec(local_origin, _rot_y)
+	_stack.append([_origin, _rot_y, _basis])
+	_origin = _origin + (_basis * local_origin)
 	_rot_y += rot_y
+	if absf(rot_y) >= 1e-6:
+		_basis = _basis * Basis(Vector3.UP, -rot_y)
+
+
+## Pushes a full 3D Transform (yaw, pitch, roll) for tilted tectonic rock slabs & overhangs.
+func push_tx_basis(local_origin: Vector3, local_basis: Basis) -> void:
+	_stack.append([_origin, _rot_y, _basis])
+	_origin = _origin + (_basis * local_origin)
+	_basis = _basis * local_basis
 
 
 func pop_tx() -> void:
 	var prev = _stack.pop_back()
 	_origin = prev[0]
 	_rot_y = prev[1]
+	_basis = prev[2]
 
 
 static func _rot_vec(v: Vector3, rad: float) -> Vector3:
@@ -49,7 +60,7 @@ static func _rot_vec(v: Vector3, rad: float) -> Vector3:
 
 
 func _tx(v: Vector3) -> Vector3:
-	return _origin + _rot_vec(v, _rot_y)
+	return _origin + (_basis * v)
 
 
 func _pick_st(emissive_mode: int) -> SurfaceTool:

@@ -3,15 +3,15 @@ extends Camera3D
 
 ## Smooth free-360° orbit + tilt + zoom + pan camera for both Mobile touch & Desktop mouse/keys.
 
-const DEFAULT_YAW := 0.24
-const DEFAULT_PITCH := 0.56
+const DEFAULT_YAW := 0.14
+const DEFAULT_PITCH := 0.30
 const DEFAULT_DISTANCE := 34.0
-const STAGE_ONE_DISTANCE := 22.0
+const STAGE_ONE_DISTANCE := 24.0
 const MIN_DISTANCE := 12.0
 const MAX_DISTANCE := 110.0
-const MIN_PITCH := 0.30
+const MIN_PITCH := 0.18
 const MAX_PITCH := 1.30
-const PITCH_PRESETS: Array[float] = [0.46, 0.72, 1.15]
+const PITCH_PRESETS: Array[float] = [0.24, 0.52, 1.15]
 
 var target := Vector3(0.0, 1.6, -26.0)
 var yaw := DEFAULT_YAW
